@@ -4210,11 +4210,8 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
 
 
 
-
-
     local utils = require("library.utils")
     local library = require("library.general_library")
-
 
     local mixin_public = {}
 
@@ -4225,7 +4222,6 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
     local mixin_lookup = {}
 
     local mixin_props = setmetatable({}, {__mode = "k"})
-
 
     local reserved_props = {
         MixinReady = function(class_name) return true end,
@@ -4240,7 +4236,6 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
         __disabled = function(class_name) return mixin_classes[class_name].Disabled and utils.copy_table(mixin_classes[class_name].Disabled) or {} end,
     }
 
-
     local instance_reserved_props = {
         MixinReady = true,
         MixinClass = true,
@@ -4248,21 +4243,17 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
         MixinBase = true,
     }
 
-
     local mixin = setmetatable({}, {
         __newindex = function(t, k, v) end,
         __index = function(t, k)
             if mixin_public[k] then return mixin_public[k] end
-
             mixin_private.load_mixin_class(k)
             if not mixin_classes[k] then return nil end
-
 
             mixin_public[k] = setmetatable({}, {
                 __newindex = function(tt, kk, vv) end,
                 __index = function(tt, kk)
                     local value
-
                     if mixin_lookup[k].Methods[kk] then
                         value = mixin_private.create_fluid_proxy(mixin_lookup[k].Methods[kk])
                     elseif mixin_classes[k].StaticMethods and mixin_classes[k].StaticMethods[kk] then
@@ -4276,7 +4267,6 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
                     elseif reserved_props[kk] then
                         value = reserved_props[kk](k)
                     end
-
                     return value
                 end,
                 __call = function(_, ...)
@@ -4287,38 +4277,29 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
                     end
                 end
             })
-
             return mixin_public[k]
         end
     })
-
     function mixin_private.is_fc_class_name(class_name)
         return type(class_name) == "string" and not mixin_private.is_fcm_class_name(class_name) and not mixin_private.is_fcx_class_name(class_name) and (class_name:match("^FC%u") or class_name:match("^__FC%u")) and true or false
     end
-
     function mixin_private.is_fcm_class_name(class_name)
         return type(class_name) == "string" and (class_name:match("^FCM%u") or class_name:match("^__FCM%u")) and true or false
     end
-
     function mixin_private.is_fcx_class_name(class_name)
         return type(class_name) == "string" and class_name:match("^FCX%u") and true or false
     end
-
     function mixin_private.fcm_to_fc_class_name(class_name)
         return string.gsub(class_name, "FCM", "FC", 1)
     end
-
     function mixin_private.fc_to_fcm_class_name(class_name)
         return string.gsub(class_name, "FC", "FCM", 1)
     end
-
     function mixin_private.assert_valid_property_name(name, error_level, suffix)
         if type(name) ~= "string" then
             error("Mixin method and property names must be strings" .. suffix, error_level)
         end
-
         suffix = suffix or ""
-
         if name:sub(-2) == "__" then
             error("Mixin methods and properties cannot end in a double underscore" .. suffix, error_level)
         elseif name:sub(1, 5):lower() == "mixin" then
@@ -4328,18 +4309,14 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
         end
     end
 
-
     function mixin_private.try_load_module(name)
         local success, result = pcall(function(c) return require(c) end, name)
-
 
         if not success and not result:match("module '[^']-' not found") then
             error(result, 0)
         end
-
         return success, result
     end
-
     local find_ancestor_with_prop
     find_ancestor_with_prop = function(class, attr, prop)
         if class[attr] and class[attr][prop] then
@@ -4351,33 +4328,26 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
         return find_ancestor_with_prop(mixin_classes[class.Parent], attr, prop)
     end
 
-
     function mixin_private.load_mixin_class(class_name, create_lookup)
         if mixin_classes[class_name] then return end
-
         local is_fcm = mixin_private.is_fcm_class_name(class_name)
-
 
         if not is_fcm and not mixin_private.is_fcx_class_name(class_name) then
             return
         end
-
         local is_personal_mixin = false
         local success
         local result
 
 
-
         if finenv.TrustedMode == nil or finenv.TrustedMode == finenv.TrustedModeType.USER_TRUSTED then
             success, result = mixin_private.try_load_module("personal_mixin." .. class_name)
         end
-
         if success then
             is_personal_mixin = true
         else
             success, result = mixin_private.try_load_module("mixin." .. class_name)
         end
-
         if not success then
 
             if is_fcm and finale[mixin_private.fcm_to_fc_class_name(class_name)] then
@@ -4386,16 +4356,12 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
                 return
             end
         end
-
         local error_prefix = (is_personal_mixin and "personal_" or "") .. "mixin." .. class_name
-
 
         if type(result) ~= "table" then
             error("Mixin '" .. error_prefix .. "' is not a table.", 0)
         end
-
         local class = {Class = class_name}
-
         local function has_attr(attr, attr_type)
             if result[attr] == nil then
                 return false
@@ -4406,48 +4372,36 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
             return true
         end
 
-
         has_attr("Parent", "string")
-
 
         if is_fcm then
 
             class.Parent = library.get_parent_class(mixin_private.fcm_to_fc_class_name(class_name))
-
             if class.Parent then
 
                 class.Parent = mixin_private.fc_to_fcm_class_name(class.Parent)
-
                 mixin_private.load_mixin_class(class.Parent)
             end
-
 
         else
 
             if not result.Parent then
                 error("Mixin '" .. error_prefix .. "' does not have a parent class defined.", 0)
             end
-
             if not mixin_private.is_fcm_class_name(result.Parent) and not mixin_private.is_fcx_class_name(result.Parent) then
                 error("Mixin parent must be an FCM or FCX class name, '" .. result.Parent .. "' given (" .. error_prefix .. ".Parent)", 0)
             end
-
             mixin_private.load_mixin_class(result.Parent)
-
 
             if not mixin_classes[result.Parent] then
                 error("Unable to load mixin '" .. result.Parent .. "' as parent of '" .. error_prefix .. "'", 0)
             end
-
             class.Parent = result.Parent
-
 
             class.Base = mixin_classes[result.Parent].Base or result.Parent
         end
 
-
         local lookup = class.Parent and utils.copy_table(mixin_lookup[class.Parent]) or {Methods = {}, Properties = {}, Disabled = {}, FCMInits = {}}
-
 
         if has_attr("Init", "function") and is_fcm then
             table.insert(lookup.FCMInits, result.Init)
@@ -4456,7 +4410,6 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
         if not is_fcm then
             lookup.FCMInits = nil
         end
-
 
         if has_attr("Disabled", "table") then
             class.Disabled = {}
@@ -4468,7 +4421,6 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
                 lookup.Properties[v] = nil
             end
         end
-
         local function find_property_name_clash(name, attr_to_check)
             for _, attr in pairs(attr_to_check) do
                 if attr == "StaticMethods" or (lookup[attr] and lookup[attr][nane]) then
@@ -4477,7 +4429,6 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
                 end
             end
         end
-
         if has_attr("Methods", "table") then
             class.Methods = {}
             for k, v in pairs(result.Methods) do
@@ -4496,7 +4447,6 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
                 lookup.Methods[k] = v
             end
         end
-
         if has_attr("StaticMethods", "table") then
             class.StaticMethods = {}
             for k, v in pairs(result.StaticMethods) do
@@ -4514,7 +4464,6 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
                 class.Methods[k] = v
             end
         end
-
         if has_attr("Properties", "table") then
             class.Properties = {}
             for k, v in pairs(result.Properties) do
@@ -4532,10 +4481,8 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
                 if not v.Get and not v.Set then
                     error("A mixin property descriptor must have at least a 'Get' or 'Set' attribute (" .. error_prefix .. ".Properties." .. k .. ")", 0)
                 end
-
                 class.Properties[k] = {}
                 lookup.Properties[k] = lookup.Properties[k] or {}
-
                 for kk, vv in pairs(v) do
                     if kk ~= "Get" and kk ~= "Set" then
                         error("A mixin property descriptor can only have 'Get' and 'Set' attributes (" .. error_prefix .. ".Properties." .. k .. ")", 0)
@@ -4548,11 +4495,9 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
                 end
             end
         end
-
         mixin_lookup[class_name] = lookup
         mixin_classes[class_name] = class
     end
-
     function mixin_private.create_method_reflection(class_name, attr)
         local t = {}
         if mixin_classes[class_name][attr] then
@@ -4562,7 +4507,6 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
         end
         return t
     end
-
     function mixin_private.create_property_reflection(class_name, attr)
         local t = {}
         if mixin_classes[class_name].Properties then
@@ -4576,7 +4520,6 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
     end
 
 
-
     local function fluid_proxy(t, ...)
         local n = select("#", ...)
 
@@ -4584,13 +4527,11 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
             return t
         end
 
-
         for i = 1, n do
             mixin_private.enable_mixin(select(i, ...))
         end
         return ...
     end
-
     local function proxy(t, ...)
         local n = select("#", ...)
 
@@ -4600,96 +4541,73 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
         return ...
     end
 
-
     function mixin_private.create_fluid_proxy(func)
         return function(t, ...)
             return fluid_proxy(t, utils.call_and_rethrow(2, func, t, ...))
         end
     end
-
     function mixin_private.create_proxy(func)
         return function(t, ...)
             return proxy(t, utils.call_and_rethrow(2, func, t, ...))
         end
     end
 
-
-
     function mixin_private.enable_mixin(object, fcm_class_name)
         if mixin_props[object] or not library.is_finale_object(object) then
             return object
         end
-
         mixin_private.apply_mixin_foundation(object)
         fcm_class_name = fcm_class_name or mixin_private.fc_to_fcm_class_name(library.get_class_name(object))
-
         mixin_private.load_mixin_class(fcm_class_name)
         mixin_props[object] = {MixinClass = fcm_class_name}
-
         for _, v in ipairs(mixin_lookup[fcm_class_name].FCMInits) do
             v(object)
         end
-
         return object
     end
-
 
 
 
     function mixin_private.apply_mixin_foundation(object)
         if object.MixinReady then return end
 
-
         local meta = getmetatable(object)
-
 
         local original_index = meta.__index
         local original_newindex = meta.__newindex
-
         meta.__index = function(t, k)
 
 
             if k == "MixinReady" then return true end
 
-
             if not mixin_props[t] then return original_index(t, k) end
-
             local class = mixin_props[t].MixinClass
             local prop
-
 
             if type(k) == "string" and k:sub(-2) == "__" then
 
                 prop = original_index(t, k:sub(1, -3))
 
-
             elseif mixin_lookup[class].Properties[k] and mixin_lookup[class].Properties[k].Get then
                 prop = utils.call_and_rethrow(2, mixin_lookup[class].Properties[k].Get, t)
-
 
             elseif mixin_props[t][k] ~= nil then
                 prop = utils.copy_table(mixin_props[t][k])
 
-
             elseif mixin_lookup[class].Methods[k] then
                 prop = mixin_lookup[class].Methods[k]
-
 
             elseif instance_reserved_props[k] then
                 prop = reserved_props[k](class)
 
-
             else
                 prop = original_index(t, k)
             end
-
             if type(prop) == "function" then
                 return mixin_private.create_fluid_proxy(prop)
             end
-
             return prop
         end
-
 
 
         meta.__newindex = function(t, k, v)
@@ -4697,14 +4615,11 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
             if not mixin_props[t] then
                 return original_newindex(t, k, v)
             end
-
             local class = mixin_props[t].MixinClass
-
 
             if mixin_lookup[class].Disabled[k] or reserved_props[k] then
                 error("No writable member '" .. tostring(k) .. "'", 2)
             end
-
 
 
             if mixin_lookup[class].Properties[k] then
@@ -4715,62 +4630,48 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
                 end
             end
 
-
             if type(k) ~= "string" then
                 mixin_props[t][k] = v
                 return
             end
 
-
             if k:sub(-2) == "__" then
                 k = k:sub(1, -3)
                 return original_newindex(t, k, v)
             end
-
             mixin_private.assert_valid_property_name(k, 3)
-
             local type_v_original = type(original_index(t, k))
             local type_v = type(v)
             local is_mixin_method = mixin_lookup[class].Methods[k] and true or false
 
-
             if type_v_original == "nil" then
-
                 if is_mixin_method and not (type_v == "function" or type_v == "nil") then
                     error("A mixin method cannot be overridden with a property.", 2)
                 end
-
                 mixin_props[t][k] = v
                 return
-
 
             elseif type_v_original == "function" then
                 if not (type_v == "function" or type_v == "nil") then
                     error("A Finale PDK method cannot be overridden with a property.", 2)
                 end
-
                 mixin_props[t][k] = v
                 return
             end
-
 
             return original_newindex(t, k, v)
         end
     end
 
-
     function mixin_private.subclass(object, class_name)
         if not library.is_finale_object(object) then
             error("Object is not a finale object.", 2)
         end
-
         if not utils.call_and_rethrow(2, mixin_private.subclass_helper, object, class_name) then
             error(class_name .. " is not a subclass of " .. object.MixinClass, 2)
         end
-
         return object
     end
-
 
 
     function mixin_private.subclass_helper(object, class_name, suppress_errors)
@@ -4778,35 +4679,26 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
             if suppress_errors then
                 return false
             end
-
             error("Object is not mixin-enabled.", 2)
         end
-
         if not mixin_private.is_fcx_class_name(class_name) then
             if suppress_errors then
                 return false
             end
-
             error("Mixins can only be subclassed with an FCX class.", 2)
         end
-
         if object.MixinClass == class_name then return true end
-
         mixin_private.load_mixin_class(class_name)
-
         if not mixin_classes[class_name] then
             if suppress_errors then
                 return false
             end
-
             error("Mixin '" .. class_name .. "' not found.", 2)
         end
-
 
         if mixin_private.is_fcm_class_name(mixin_classes[class_name].Parent) and mixin_classes[class_name].Parent ~= object.MixinClass then
             return false
         end
-
 
         if mixin_classes[class_name].Parent ~= object.MixinClass then
             if not utils.call_and_rethrow(2, mixin_private.subclass_helper, object, mixin_classes[class_name].Parent) then
@@ -4814,9 +4706,7 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
             end
         end
 
-
         mixin_props[object].MixinClass = class_name
-
 
         if mixin_classes[class_name].Disabled then
             for k, _ in pairs(mixin_classes[class_name].Disabled) do
@@ -4824,61 +4714,44 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
             end
         end
 
-
         if mixin_classes[class_name].Init then
             utils.call_and_rethrow(2, mixin_classes[class_name].Init, object)
         end
-
         return true
     end
-
 
     function mixin_private.create_fcm(class_name, ...)
         mixin_private.load_mixin_class(class_name)
         if not mixin_classes[class_name] then return nil end
-
         return mixin_private.enable_mixin(utils.call_and_rethrow(2, finale[mixin_private.fcm_to_fc_class_name(class_name)], ...))
     end
-
 
     function mixin_private.create_fcx(class_name, ...)
         mixin_private.load_mixin_class(class_name)
         if not mixin_classes[class_name] then return nil end
-
         local object = mixin_private.create_fcm(mixin_classes[class_name].Base, ...)
-
         if not object then return nil end
-
         if not utils.call_and_rethrow(2, mixin_private.subclass_helper, object, class_name, false) then
             return nil
         end
-
         return object
     end
 
-
     mixin_public.is_fc_class_name = mixin_private.is_fc_class_name
-
 
     mixin_public.is_fcm_class_name = mixin_private.is_fcm_class_name
 
-
     mixin_public.is_fcx_class_name = mixin_private.is_fcx_class_name
-
 
     mixin_public.fc_to_fcm_class_name = mixin_private.fc_to_fcm_class_name
 
-
     mixin_public.fcm_to_fc_class_name = mixin_private.fcm_to_fc_class_name
 
-
     mixin_public.subclass = mixin_private.subclass
-
 
     function mixin_public.UI()
         return mixin_private.enable_mixin(finenv.UI(), "FCMUI")
     end
-
 
     function mixin_public.eachentry(region, layer)
         local measure = region.StartMeasure
@@ -4915,13 +4788,11 @@ package.preload["library.mixin"] = package.preload["library.mixin"] or function(
             end
         end
     end
-
     return mixin
 end
 package.preload["library.layer"] = package.preload["library.layer"] or function()
 
     local layer = {}
-
 
     function layer.copy(region, source_layer, destination_layer, clone_articulations)
         local start = region.StartMeasure
@@ -4955,7 +4826,6 @@ package.preload["library.layer"] = package.preload["library.layer"] or function(
         end
     end
 
-
     function layer.clear(region, layer_to_clear)
         layer_to_clear = layer_to_clear - 1
         local start = region.StartMeasure
@@ -4970,7 +4840,6 @@ package.preload["library.layer"] = package.preload["library.layer"] or function(
             noteentry_layer:ClearAllEntries()
         end
     end
-
 
     function layer.swap(region, swap_a, swap_b)
 
@@ -5010,12 +4879,9 @@ package.preload["library.layer"] = package.preload["library.layer"] or function(
         end
     end
 
-
-
     function layer.max_layers()
         return finale.FCLayerPrefs.GetMaxLayers and finale.FCLayerPrefs.GetMaxLayers() or 4
     end
-
     return layer
 end
 package.preload["library.note_entry"] = package.preload["library.note_entry"] or function()
@@ -5253,6 +5119,24 @@ package.preload["library.note_entry"] = package.preload["library.note_entry"] or
         entry.Duration = bit32.bor(entry.Duration, bit32.rshift(entry.Duration, 1))
     end
 
+    function note_entry.remove_augmentation_dot(entry)
+        if entry.Duration <= 0 then
+            return false
+        end
+        local lowest_order_bit = 1
+        if bit32.band(entry.Duration, lowest_order_bit) == 0 then
+
+            lowest_order_bit = bit32.bxor(bit32.band(entry.Duration, entry.Duration - 1), entry.Duration)
+        end
+
+        local new_value = bit32.band(entry.Duration, bit32.bnot(lowest_order_bit))
+        if new_value ~= 0 then
+            entry.Duration = new_value
+            return true
+        end
+        return false
+    end
+
     function note_entry.get_next_same_v(entry)
         local next_entry = entry:Next()
         if entry.Voice2 then
@@ -5308,9 +5192,7 @@ end
 package.preload["library.tie"] = package.preload["library.tie"] or function()
 
     local tie = {}
-
     local note_entry = require('library.note_entry')
-
 
     local equal_note = function(entry, target_note, for_tied_to, tie_must_exist)
         local found_note = entry:FindPitch(target_note)
@@ -5328,7 +5210,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         end
         return nil
     end
-
 
     function tie.calc_tied_to(note, tie_must_exist)
         if not note then
@@ -5358,7 +5239,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         return nil
     end
 
-
     function tie.calc_tied_from(note, tie_must_exist)
         if not note then
             return nil
@@ -5375,7 +5255,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
             end
         end
     end
-
 
     function tie.calc_tie_span(note, for_tied_to, tie_must_exist)
         local start_measnum = (for_tied_to and note.Entry.Measure > 1) and note.Entry.Measure - 1 or note.Entry.Measure
@@ -5398,7 +5277,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         return note_entry_layer, start_note, end_note
     end
 
-
     function tie.calc_default_direction(note, for_tieend, tie_prefs)
         if for_tieend then
             if not note.TieBackwards then
@@ -5419,16 +5297,13 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
 
 
 
-
             if note.NoteIndex == 0 then
                 return finale.TIEMODDIR_UNDER
             end
             if note.NoteIndex == note.Entry.Count - 1 then
                 return finale.TIEMODDIR_OVER
             end
-
             local inner_default = 0
-
             if tie_prefs.ChordDirectionType ~= finale.TIECHORDDIR_STEMREVERSAL then
                 if note.NoteIndex < math.floor(note.Entry.Count / 2) then
                     inner_default = finale.TIEMODDIR_UNDER
@@ -5502,17 +5377,13 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
                 end
             end
         end
-
         return (stemdir > 0) and finale.TIEMODDIR_UNDER or finale.TIEMODDIR_OVER
-
     end
-
     local calc_layer_is_visible = function(staff, layer_number)
         local altnotation_layer = staff.AltNotationLayer
         if layer_number ~= altnotation_layer then
             return staff.AltShowOtherNotes
         end
-
         local hider_altnotation_types = {
             finale.ALTSTAFF_BLANKNOTATION, finale.ALTSTAFF_SLASHBEATS, finale.ALTSTAFF_ONEBARREPEAT, finale.ALTSTAFF_TWOBARREPEAT, finale.ALTSTAFF_BLANKNOTATIONRESTS,
         }
@@ -5522,10 +5393,8 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
                 return false
             end
         end
-
         return true
     end
-
     local calc_other_layers_visible = function(entry)
         local staff = finale.FCCurrentStaffSpec()
         staff:LoadForEntry(entry)
@@ -5546,7 +5415,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         end
         return false
     end
-
     local layer_stem_direction = function(layer_prefs, entry)
         if layer_prefs.UseFreezeStemsTies then
             if layer_prefs.UseRestOffsetInMultiple then
@@ -5561,7 +5429,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         end
         return 0
     end
-
     local layer_tie_direction = function(entry)
         local layer_prefs = finale.FCLayerPrefs()
         if not layer_prefs:Load(entry.LayerNumber - 1) then
@@ -5573,7 +5440,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         end
         return 0
     end
-
 
     function tie.calc_direction(note, tie_mod, tie_prefs)
 
@@ -5594,10 +5460,8 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         if note.Entry.FlipTie then
             return note.Entry:CalcStemUp() and finale.TIEMODDIR_OVER or finale.TIEMODDIR_UNDER
         end
-
         return tie.calc_default_direction(note, not tie_mod:IsStartTie(), tie_prefs)
     end
-
     local calc_is_end_of_system = function(note, for_pageview)
         if not note.Entry:Next() then
             local region = finale.FCMusicRegion()
@@ -5618,7 +5482,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         end
         return false
     end
-
     local has_nonaligned_2nd = function(entry)
         for note in each(entry) do
             if note:IsNonAligned2nd() then
@@ -5627,7 +5490,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         end
         return false
     end
-
 
     function tie.calc_connection_code(note, placement, direction, for_endpoint, for_tieend, for_pageview, tie_prefs)
 
@@ -5679,7 +5541,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         end
         return finale.TIEMODCNCT_NONE
     end
-
     local calc_placement_for_endpoint = function(note, tie_mod, tie_prefs, direction, stemdir, for_endpoint, end_note_slot, end_num_notes, end_upstem2nd, end_downstem2nd)
         local note_slot = end_note_slot and end_note_slot or note.NoteIndex
         local num_notes = end_num_notes and end_num_notes or note.Entry.Count
@@ -5723,7 +5584,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         end
         return direction == finale.TIEMODDIR_UNDER and finale.TIEPLACE_UNDERINNER or finale.TIEPLACE_OVERINNER
     end
-
 
     function tie.calc_placement(note, tie_mod, for_pageview, direction, tie_prefs)
         if not tie_prefs then
@@ -5800,16 +5660,13 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
             end
         end
 
-
         if start_placement == finale.TIEPLACE_OVERINNER or start_placement == finale.TIEPLACE_UNDERINNER then
             end_placement = start_placement
         elseif end_placement == finale.TIEPLACE_OVERINNER or end_placement == finale.TIEPLACE_UNDERINNER then
             start_placement = end_placement
         end
-
         return start_placement, end_placement
     end
-
     local calc_prefs_offset_for_endpoint = function(note, tie_prefs, tie_placement_prefs, placement, for_endpoint, for_tieend, for_pageview)
         local tie_
         if for_endpoint then
@@ -5823,7 +5680,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         end
         return tie_placement_prefs:GetHorizontalStart(placement), tie_placement_prefs:GetVerticalStart(placement)
     end
-
     local activate_endpoint = function(note, tie_mod, placement, direction, for_endpoint, for_pageview, tie_prefs, tie_placement_prefs)
         local active_check_func = for_endpoint and tie_mod.IsEndPointActive or tie_mod.IsStartPointActive
         if active_check_func(tie_mod) then
@@ -5836,7 +5692,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         activation_func(tie_mod, direction == finale.TIEMODDIR_OVER, connect, xoffset, yoffset)
         return true
     end
-
 
     function tie.activate_endpoints(note, tie_mod, for_pageview, tie_prefs)
         if not tie_prefs then
@@ -5853,13 +5708,11 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         end
         return lactivated or ractivated
     end
-
     local calc_tie_length = function(note, tie_mod, for_pageview, direction, tie_prefs, tie_placement_prefs)
         local cell_metrics_start = finale.FCCellMetrics()
         local entry_metrics_start = finale.FCEntryMetrics()
         cell_metrics_start:LoadAtEntry(note.Entry)
         entry_metrics_start:Load(note.Entry)
-
         local cell_metrics_end = finale.FCCellMetrics()
         local entry_metrics_end = finale.FCEntryMetrics()
         local note_entry_layer, start_note, end_note = tie.calc_tie_span(note, false, true)
@@ -5869,20 +5722,16 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
                 entry_metrics_end:Load(end_note.Entry)
             end
         end
-
         local lplacement, rplacement = tie.calc_placement(note, tie_mod, for_pageview, direction, tie_prefs)
         local horz_start = 0
         local horz_end = 0
         local incr_start = 0
         local incr_end = 0
 
-
         local OUTER_NOTE_OFFSET_PCTG = 7.0 / 16.0
         local INNER_INCREMENT = 6
-
         local staff_scaling = cell_metrics_start.StaffScaling / 10000.0
         local horz_stretch = for_pageview and 1 or cell_metrics_start.HorizontalStretch / 10000.0
-
         if tie_mod:IsStartTie() then
             horz_start = entry_metrics_start:GetNoteLeftPosition(note.NoteIndex) / horz_stretch
             if lplacement == finale.TIEPLACE_OVERINNER or lplacement == finale.TIEPLACE_OVEROUTERSTEM or lplacement == finale.TIEPLACE_UNDERINNER then
@@ -5894,7 +5743,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         else
             horz_start = (cell_metrics_start.MusicStartPos * staff_scaling) / horz_stretch
         end
-
         if tie_mod:IsStartTie() and (not end_note or cell_metrics_start.StaffSystem ~= cell_metrics_end.StaffSystem) then
             local next_cell_metrics = finale.FCCellMetrics()
             local next_metrics_loaded = next_cell_metrics:LoadAtCell(finale.FCCell(note.Entry.Measure + 1, note.Entry.Staff))
@@ -5923,7 +5771,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
                 horz_end = horz_end + (entry_metrics_start:GetNoteWidth(note.NoteIndex) * (1.0 - OUTER_NOTE_OFFSET_PCTG))
             end
         end
-
         local start_offset = tie_mod.StartHorizontalPos
         if not tie_mod:IsStartPointActive() then
             start_offset = calc_prefs_offset_for_endpoint(note, tie_prefs, tie_placement_prefs, lplacement, false, not tie_mod:IsStartTie(), for_pageview)
@@ -5932,14 +5779,12 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         if not tie_mod:IsEndPointActive() then
             end_offset = calc_prefs_offset_for_endpoint(note, tie_prefs, tie_placement_prefs, lplacement, true, not tie_mod:IsStartTie(), for_pageview)
         end
-
         local tie_length = horz_end - horz_start
 
         tie_length = tie_length / staff_scaling
         tie_length = tie_length + ((end_offset + incr_end) - (start_offset + incr_start))
         return math.floor(tie_length + 0.5)
     end
-
 
     function tie.calc_contour_index(note, tie_mod, for_pageview, direction, tie_prefs)
         if not tie_prefs then
@@ -5960,7 +5805,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         end
         return finale.TCONTOURIDX_MEDIUM, tie_length
     end
-
     local calc_inset_and_height = function(tie_prefs, tie_contour_prefs, length, contour_index, get_fixed_func, get_relative_func, get_height_func)
 
 
@@ -5992,7 +5836,6 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         return inset, height
     end
 
-
     function tie.activate_contour(note, tie_mod, for_pageview, tie_prefs)
         if tie_mod:IsContourActive() then
             return false
@@ -6013,16 +5856,15 @@ package.preload["library.tie"] = package.preload["library.tie"] or function()
         tie_mod:ActivateContour(left_inset, left_height, right_inset, right_height, tie_prefs.FixedInsetStyle)
         return true
     end
-
     return tie
 end
 function plugindef()
     finaleplugin.RequireSelection = true
     finaleplugin.Author = "Carl Vine"
-    finaleplugin.AuthorURL = "http://carlvine.com/lua/"
+    finaleplugin.AuthorURL = "https://carlvine.com/lua/"
     finaleplugin.Copyright = "https://creativecommons.org/licenses/by/4.0/"
-    finaleplugin.Version = "v0.55"
-    finaleplugin.Date = "2023/04/17"
+    finaleplugin.Version = "v0.61"
+    finaleplugin.Date = "2023/05/23"
     finaleplugin.CategoryTags = "Measure, Time Signature, Meter"
     finaleplugin.MinJWLuaVersion = 0.64
     finaleplugin.AdditionalMenuOptions = [[
@@ -6043,49 +5885,35 @@ function plugindef()
     ]]
     finaleplugin.ScriptGroupName = "Measure Span"
     finaleplugin.ScriptGroupDescription = "Divide single measures or join measure pairs by changing time signatures"
-    finaleplugin.Notes = [[
-        This script changes the "span" of every measure in the currently selected music by manipulating its time signature,
-        either dividing it into two or combining it with the following measure.
-        Many measures with different time signatures can be modified at once.
-        JOIN:
-        Combine each pair of measures in the selection into one by combining their time signatures.
-        If they have the same time signature either double the numerator ([3/4][3/4] -> [6/4])
-        or halve the denominator ([3/4][3/4] -> [3/2]).
-        If the time signatures aren't equal, choose to either COMPOSITE them ([2/4][3/8] -> [2/4 + 3/8])
-        or CONSOLIDATE them ([2/4][3/8] -> [7/8]). (Consolidation loses current beam groupings).
-        You can choose that a consolidated "display" time signature is created automatically when compositing meters.
-        "JOIN" only works on an even number of measures.
-        DIVIDE:
-        Divide every selected measure into two, changing the time signature by either
-        halving the numerator ([6/4] -> [3/4][3/4]) or doubling the denominator ([6/4] -> [6/8][6/8]).
-        If the measure has an odd number of beats, choose whether to put more beats in the
-        first measure (5->3+2) or the second (5->2+3).
-        Measures containing composite meters will be divided after the first composite group,
-        or if there is only one group, after its first element.
-        IN ALL CASES:
-        Incomplete measures will be filled with rests before Join/Divide.
-        Measures containing too many notes will be trimmed to their "real" duration.
-        Time signatures "for display only" will be removed.
-        Measures are either deleted or shifted in every operation so smart shapes spanning the area need to be "restored".
-        Selecting a SPAN of "5" will look for smart shapes to restore from 5 measures before until 5 after the selected region.
-        (This takes noticeably longer than a SPAN of "2").
-        OPTIONS:
-        To configure script settings select the "Measure Span Options..." menu item,
-        or else hold down the SHIFT or ALT (option) key when invoking "Join" or "Divide".
+    finaleplugin.Notes = [[This script changes the "span" of every measure in the currently selected music by
+manipulating its time signature, either dividing it into two or combining it with the
+following measure. Many measures with different time signatures can be modified at once.
+== JOIN ==
+Combine each pair of measures in the selection into one by combining their time signatures.
+If they have the same time signature either double the numerator ([3/4][3/4] -> [6/4]) or
+halve the denominator ([3/4][3/4] -> [3/2]). If the time signatures aren't equal, choose to either
+COMPOSITE them ([2/4][3/8] -> [2/4 + 3/8]) or CONSOLIDATE them ([2/4][3/8] -> [7/8]).
+(Consolidation loses current beam groupings). You can choose that a consolidated "display"
+time signature is created automatically when compositing meters. "JOIN" only works on an even number of measures.
+== DIVIDE ==
+Divide every selected measure into two, changing the time signature by either halving the
+numerator ([6/4] -> [3/4][3/4]) or doubling the denominator ([6/4] -> [6/8][6/8]).
+If the measure has an odd number of beats, choose whether to put more beats in the first
+measure (5->3+2) or the second (5->2+3). Measures containing composite meters will be divided
+after the first composite group, or if there is only one group, after its first element.
+== IN ALL CASES ==
+Incomplete measures will be filled with rests before Join/Divide. Measures containing too many
+notes will be trimmed to their "real" duration. Time signatures "for display only" will be removed.
+Measures are either deleted or shifted in every operation so smart shapes spanning the area
+need to be "restored". Selecting a SPAN of "5" will look for smart shapes to restore from 5
+measures before until 5 after the selected region. (This takes noticeably longer than a SPAN of "2").
+== OPTIONS ==
+To configure script settings select the "Measure Span Options..." menu item, or else hold down
+the SHIFT or ALT (option) key when invoking "Join" or "Divide".
     ]]
     finaleplugin.HashURL = "https://raw.githubusercontent.com/finale-lua/lua-scripts/master/hash/measure_span.hash"
     return "Measure Span Options...", "Measure Span Options", "Change the default behaviour of the Measure Span script"
 end
-local info = [[This script changes the "span" of every measure in the currently selected music by manipulating its time signature, either dividing it into two or combining it with the following measure. Many measures with different time signatures can be modified at once.
-JOIN:
-Combine each pair of measures in the selection into one by combining their time signatures. If they have the same time signature either double the numerator ([3/4][3/4] -> [6/4]) or halve the denominator ([3/4][3/4] -> [3/2]). If the time signatures aren't equal, choose to either COMPOSITE them ([2/4][3/8] -> [2/4 + 3/8]) or CONSOLIDATE them ([2/4][3/8] -> [7/8]). (Consolidation loses current beam groupings). You can choose that a consolidated "display" time signature is created automatically when compositing meters. "JOIN" only works on an even number of measures.
-DIVIDE:
-Divide every selected measure into two, changing the time signature by either halving the numerator ([6/4] -> [3/4][3/4]) or doubling the denominator ([6/4] -> [6/8][6/8]). If the measure has an odd number of beats, choose whether to put more beats in the first measure (5->3+2) or the second (5->2+3). Measures containing composite meters will be divided after the first composite group, or if there is only one group, after its first element.
-IN ALL CASES:
-Incomplete measures will be filled with rests before Join/Divide. Measures containing too many notes will be trimmed to their "real" duration. Time signatures "for display only" will be removed. Measures are either deleted or shifted in every operation so smart shapes spanning the area need to be "restored". Selecting a SPAN of "5" will look for smart shapes to restore from 5 measures before until 5 after the selected region. (This takes noticeably longer than a SPAN of "2").
-OPTIONS:
-To configure script settings select the "Measure Span Options..." menu item, or else hold down the SHIFT or ALT (option) key when invoking "Join" or "Divide".
-]]
 span_action = span_action or "options"
 local config = {
     halve_numerator =   true,
@@ -6095,7 +5923,7 @@ local config = {
     note_spacing    =   true,
     repaginate      =   false,
     display_meter   =   true,
-    shape_extend    =   2,
+    shape_extend    =   3,
     window_pos_x    =   false,
     window_pos_y    =   false,
 }
@@ -6129,90 +5957,102 @@ function user_options()
     local x_grid = { 15, 70, 190, 210, 305, 110 }
     local i_width = 142
     local y = 0
-    local function yd(delta)
-        delta = delta or 15
-        y = y + delta
-    end
     local dlg = mixin.FCXCustomLuaWindow():SetTitle(plugindef())
-    local shadow = dlg:CreateStatic(1, y + 1):SetText("DIVIDE EACH MEASURE INTO TWO:"):SetWidth(x_grid[4])
+        local function yd(diff)
+            diff = diff or 15
+            y = y + diff
+        end
+        local function cstat(cx, cy, ctext, cwide, chigh)
+            cx = (type(cx) == "string") and tonumber(cx) or x_grid[cx]
+            local stat = dlg:CreateStatic(cx, cy):SetText(ctext)
+            if cwide then stat:SetWidth(cwide) end
+            if chigh then stat:SetHeight(chigh) end
+            return stat
+        end
+        local function ccheck(cx, cy, cname, cwide, check, ctext, chigh)
+            cx = x_grid[cx]
+            local chk = dlg:CreateCheckbox(cx, cy, cname):SetWidth(cwide):SetText(ctext):SetCheck(check)
+            if chigh then chk:SetHeight(chigh) end
+        end
+        local function chl(cx, cy, cwide)
+            dlg:CreateHorizontalLine(cx, cy, cwide)
+        end
+    local shadow = cstat("1", y + 1, "DIVIDE EACH MEASURE INTO TWO:", x_grid[4])
     if shadow.SetTextColor then shadow:SetTextColor(180, 180, 180) end
-    dlg:CreateStatic(0, y):SetText("DIVIDE EACH MEASURE INTO TWO:"):SetWidth(x_grid[4])
+    cstat("0", y, "DIVIDE EACH MEASURE INTO TWO:", x_grid[4])
     yd(20)
-    dlg:CreateStatic(x_grid[1], y):SetText("Halve the numerator:"):SetWidth(x_grid[3])
-    dlg:CreateCheckbox(x_grid[3], y, "1"):SetCheck(config.halve_numerator and 1 or 0):SetText(" [6/4] -> [3/4][3/4]"):SetWidth(i_width)
+    cstat(1, y, "Halve the numerator:", x_grid[3])
+    ccheck(3, y, "1", i_width, (config.halve_numerator and 1 or 0), " [6/4] -> [3/4][3/4]")
     yd()
-    dlg:CreateStatic(x_grid[2], y):SetText("OR")
+    cstat(2, y, "OR")
     yd()
-    dlg:CreateStatic(x_grid[1], y):SetText("Double the denominator:"):SetWidth(x_grid[3])
-    dlg:CreateCheckbox(x_grid[3], y, "2"):SetCheck(config.halve_numerator and 0 or 1):SetText(" [6/4] -> [6/8][6/8]"):SetWidth(i_width)
+    cstat(1, y, "Double the denominator:", x_grid[3])
+    ccheck(3, y, "2", i_width, (config.halve_numerator and 0 or 1), " [6/4] -> [6/8][6/8]")
     yd(25)
-    dlg:CreateHorizontalLine(x_grid[1], y, x_grid[5])
+    chl(1, y, x_grid[5])
     yd(10)
-    dlg:CreateStatic(x_grid[1], y):SetText("If halving a numerator with an ODD number of beats:"):SetWidth(x_grid[5])
+    cstat(1, y, "If halving a numerator with an ODD number of beats:", x_grid[5])
     yd(17)
-    dlg:CreateStatic(x_grid[1], y):SetText("More beats in first measure:"):SetWidth(x_grid[4] + 20)
-    dlg:CreateCheckbox(x_grid[3], y, "3"):SetCheck(config.odd_more_first and 1 or 0):SetText(" 3 -> 2 + 1 etc."):SetWidth(i_width)
+    cstat(1, y, "More beats in first measure:", x_grid[4] + 20)
+    ccheck(3, y, "3", i_width, (config.odd_more_first and 1 or 0), " 3 -> 2 + 1 etc.")
     yd()
-    dlg:CreateStatic(x_grid[2], y):SetText("OR")
+    cstat(2, y, "OR")
     yd()
-    dlg:CreateStatic(x_grid[1], y):SetText("More beats in second measure:"):SetWidth(x_grid[4] + 20)
-    dlg:CreateCheckbox(x_grid[3], y, "4"):SetCheck(config.odd_more_first and 0 or 1):SetText(" 3 -> 1 + 2 etc."):SetWidth(i_width)
+    cstat(1, y, "More beats in second measure:", x_grid[4] + 20)
+    ccheck(3, y, "4", i_width, (config.odd_more_first and 0 or 1), " 3 -> 1 + 2 etc.")
     yd(27)
-    dlg:CreateHorizontalLine(0, y, x_grid[3] + i_width)
-    dlg:CreateHorizontalLine(0, y + 2, x_grid[3] + i_width)
-    dlg:CreateHorizontalLine(0, y + 3, x_grid[3] + i_width)
-    yd(10)
-    shadow = dlg:CreateStatic(1, y + 1):SetText("JOIN PAIRS OF MEASURES:"):SetWidth(x_grid[3])
+    chl(0, y, x_grid[3] + i_width)
+    chl(0, y + 2, x_grid[3] + i_width)
+    chl(0, y + 3, x_grid[3] + i_width)
+    yd(13)
+    shadow = cstat("1", y + 1, "JOIN PAIRS OF MEASURES:", x_grid[3])
     if shadow.SetTextColor then shadow:SetTextColor(180, 180, 180) end
-    dlg:CreateStatic(0, y):SetText("JOIN PAIRS OF MEASURES:"):SetWidth(x_grid[3])
+    cstat("0", y, "JOIN PAIRS OF MEASURES:", x_grid[3])
     yd(20)
-    dlg:CreateStatic(x_grid[1], y):SetText("If both measures have the same time signature ..."):SetWidth(x_grid[5])
+    cstat(1, y, "If both measures have the same time signature ...", x_grid[5])
     yd(17)
-    dlg:CreateStatic(x_grid[1], y):SetText("Double the numerator:"):SetWidth(x_grid[3])
-    dlg:CreateCheckbox(x_grid[3], y, "5"):SetCheck(config.double_join and 1 or 0):SetText(" [3/8][3/8] -> [6/8]"):SetWidth(i_width)
+    cstat(1, y, "Double the numerator:", x_grid[3])
+    ccheck(3, y, "5", i_width, (config.double_join and 1 or 0), " [3/8][3/8] -> [6/8]")
     yd()
-    dlg:CreateStatic(x_grid[2], y):SetText("OR")
+    cstat(2, y, "OR")
     yd()
-    dlg:CreateStatic(x_grid[1], y):SetText("Halve the denominator:"):SetWidth(x_grid[3])
-    dlg:CreateCheckbox(x_grid[3], y, "6"):SetCheck(config.double_join and 0 or 1):SetText(" [3/8][3/8] -> [3/4]"):SetWidth(i_width)
+    cstat(1, y, "Halve the denominator:", x_grid[3])
+    ccheck(3, y, "6", i_width, (config.double_join and 0 or 1), " [3/8][3/8] -> [3/4]")
     yd(25)
-    dlg:CreateHorizontalLine(x_grid[1], y, x_grid[5])
+    chl(1, y, x_grid[5])
     yd(5)
-    dlg:CreateStatic(x_grid[1], y):SetText("otherwise ..."):SetWidth(x_grid[2])
+    cstat(1, y, "otherwise ...", x_grid[2])
     yd(17)
-    dlg:CreateStatic(x_grid[1], y):SetWidth(x_grid[5]):SetHeight(30):SetText("Consolidate time signatures:")
-    dlg:CreateCheckbox(x_grid[3], y, "8"):SetCheck(config.composite_join and 0 or 1)
-        :SetText(" [2/4][3/8] -> [7/8]\n (lose beaming groups)"):SetWidth(i_width):SetHeight(30)
+    cstat(1, y, "Consolidate time signatures:", x_grid[4])
+    ccheck(3, y, "8", i_width, (config.composite_join and 0 or 1),
+        " [2/4][3/8] -> [7/8]\n (lose beaming groups)", 30)
     yd(17)
-    dlg:CreateStatic(x_grid[2], y):SetText("OR")
+    cstat(2, y, "OR")
     yd(17)
-    dlg:CreateStatic(x_grid[1], y):SetText("Composite time signature:"):SetWidth(x_grid[3])
-    dlg:CreateCheckbox(x_grid[3], y, "7"):SetCheck(config.composite_join and 1 or 0)
-        :SetText(" [2/4][3/8] -> [2/4+3/8]\n (keep beaming groups)"):SetWidth(i_width):SetHeight(30)
-    yd(30)
-    dlg:CreateCheckbox(x_grid[1], y, "display"):SetCheck(config.display_meter and 1 or 0):SetWidth(x_grid[5] + 10):SetHeight(30)
-        :SetText(" Create \"display\" time signature when compositing\n"
-        .. " ( [2/4][3/8] -> [2/4+3/8] displaying \"7/8\" )")
+    cstat(1, y, "Composite time signatures:", x_grid[3])
+    ccheck(3, y, "7", i_width, (config.composite_join and 1 or 0),
+        " [2/4][3/8] -> [2/4+3/8]\n (keep beaming groups)", 30)
+    yd(35)
+    ccheck(1, y, "display", x_grid[5] + 10, (config.display_meter and 1 or 0),
+        " Create \"display\" time signature when compositing\n [2/4][3/8] -> [2/4+3/8] displaying \"7/8\" )", 30)
     yd(36)
-    dlg:CreateHorizontalLine(0, y, x_grid[3] + i_width)
-    dlg:CreateHorizontalLine(0, y + 2, x_grid[3] + i_width)
-    dlg:CreateHorizontalLine(0, y + 3, x_grid[3] + i_width)
+    chl(0, y, x_grid[3] + i_width)
+    chl(0, y + 2, x_grid[3] + i_width)
+    chl(0, y + 3, x_grid[3] + i_width)
     yd(12)
-    dlg:CreateStatic(0, y):SetText("Preserve smart shapes within\n(Larger spans take longer)"):SetWidth(x_grid[3]):SetHeight(30)
+    cstat("0", y, "Preserve smart shapes within\n(Larger spans take longer)", x_grid[3], 30)
     local popup = dlg:CreatePopup(x_grid[3] - 25, y - 1, "extend"):SetWidth(35):SetSelectedItem(config.shape_extend - 2)
-    dlg:CreateStatic(x_grid[3] + 15, y):SetText("measure span")
     for i = 2, 5 do
         popup:AddString(i)
     end
-    yd(35)
-    dlg:CreateStatic(0, y):SetText("ON COMPLETION:"):SetWidth(i_width)
-    dlg:CreateCheckbox(x_grid[6], y, "spacing"):SetText("Respace notes")
-        :SetCheck(config.note_spacing and 1 or 0):SetWidth(i_width)
+    cstat("205", y, "measure span")
+    yd(38)
+    cstat("0", y, "ON COMPLETION:", i_width)
+    ccheck(6, y, "spacing", i_width, (config.note_spacing and 1 or 0), "Respace notes")
     dlg:CreateButton(x_grid[5], y):SetText("?"):SetWidth(20)
-        :AddHandleCommand(function() finenv.UI():AlertInfo(info, "Measure Span Info") end)
+        :AddHandleCommand(function() finenv.UI():AlertInfo(finaleplugin.Notes:gsub(" \n", " "), "Measure Span Info") end)
     yd(18)
-    dlg:CreateCheckbox(x_grid[6], y, "repaginate"):SetText("Repaginate entire score")
-        :SetCheck(config.repaginate and 1 or 0):SetWidth(i_width)
+    ccheck(6, y, "repaginate", i_width, (config.repaginate and 1 or 0), "Repaginate entire score")
 
     local function radio_change(id, check)
         local matching_id = (id % 2 == 0) and (id - 1) or (id + 1)
@@ -6221,7 +6061,7 @@ function user_options()
     for id = 1, 8 do
         dlg:GetControl(tostring(id)):AddHandleCommand(function(self) radio_change(id, self:GetCheck()) end)
     end
-    dlg:CreateOkButton()
+    dlg:CreateOkButton():SetText("Save")
     dlg:CreateCancelButton()
     dialog_set_position(dlg)
     dlg:RegisterHandleOkButtonPressed(function(self)
@@ -6268,8 +6108,8 @@ function region_contains_notes(region, layer_num)
     return false
 end
 function insert_blank_measure_after(measure_num)
-    local props_copy = {"PositioningNotesMode", "Barline", "SpaceAfter", "UseTimeSigForDisplay"}
-    local props_set = {"BreakMMRest", "HideCautionary", "IncludeInNumbering", "BreakWordExtension"}
+    local props_copy = {"PositioningNotesMode", "Barline", "SpaceAfter", "SpaceBefore", "UseTimeSigForDisplay"}
+    local props_set = {"BreakMMRest", "HideCautionary", "BreakWordExtension"}
     local measure = { finale.FCMeasure(), finale.FCMeasure() }
     measure[1]:Load(measure_num)
     measure[1].UseTimeSigForDisplay = false
@@ -6336,7 +6176,7 @@ function clear_composite(time_sig, top, bottom)
         time_sig:RemoveCompositeBottom(bottom)
     end
 end
-function extract_composite(time_sig)
+function extract_composite_to_array(time_sig)
     local comp_array = {}
     if time_sig.CompositeTop then
         comp_array.top = { comp = time_sig:CreateCompositeTop(), count = 0, groups = { } }
@@ -6447,13 +6287,13 @@ function divide_measures(selection)
         measure[2]:Load(measure_num + 1)
         local time_sig = { measure[1]:GetTimeSignature(), measure[2]:GetTimeSignature() }
         local top = { time_sig[1].Beats, time_sig[1].Beats }
-        local bottom = { time_sig[1].BeatDuration, time_sig[1].BeatDuration }
+        local bottom = time_sig[1].BeatDuration
         local pair_rgn = mixin.FCMMusicRegion()
         pair_rgn:SetRegion(selection):SetFullMeasureStack()
         pad_or_truncate_cells(pair_rgn, measure_num, measure[1]:GetDuration())
         if time_sig[1].CompositeTop then
 
-            local comp_array = extract_composite(time_sig[1])
+            local comp_array = extract_composite_to_array(time_sig[1])
             if comp_array.top.count == 1 then
                 clear_composite(time_sig[1], comp_array.top.groups[1][1], comp_array.bottom.groups[1])
                 if #comp_array.top.groups[1] == 2 then
@@ -6481,13 +6321,13 @@ function divide_measures(selection)
 
             if config.halve_numerator then
                 if top[1] == 1 then
-                    if bottom[1] % 3 == 0 then
-                        bottom[1] = bottom[1] / 3
+                    if bottom % 3 == 0 then
+                        bottom = bottom / 3
                         top[1] = config.odd_more_first and 2 or 1
                         top[2] = 3 - top[1]
                     else
                         top[2] = 1
-                        bottom[1] = bottom[1] / 2
+                        bottom = bottom / 2
                     end
                 else
                     top[1] = top[1] / 2
@@ -6500,11 +6340,10 @@ function divide_measures(selection)
                     top[2] = time_sig[1].Beats - top[1]
                 end
             else
-                bottom[1] = bottom[1] / 2
+                bottom = bottom / 2
             end
-            bottom[2] = bottom[1]
-            time_sig[1]:SetBeats(top[1]):SetBeatDuration(bottom[1])
-            time_sig[2]:SetBeats(top[2]):SetBeatDuration(bottom[2])
+            time_sig[1]:SetBeats(top[1]):SetBeatDuration(bottom)
+            time_sig[2]:SetBeats(top[2]):SetBeatDuration(bottom)
         end
         measure[1]:Save()
         measure[2]:Save()
@@ -6536,43 +6375,43 @@ function shift_smart_shapes(rgn, measure_num, pos_offset)
     marks:LoadAllForRegion(shift_rgn, true)
     for mark in each(marks) do
         local shape = mark:CreateSmartShape()
-        local segment = { shape:GetTerminateSegmentLeft(), shape:GetTerminateSegmentRight() }
-        local m = { segment[1].Measure, segment[2].Measure }
-        if shape.Visible and m[1] < (measure_num + 2) and m[1] ~= m[2] and m[2] > measure_num then
+        local segment = { L = shape:GetTerminateSegmentLeft(), R = shape:GetTerminateSegmentRight() }
+        local m = { L = segment.L.Measure, R = segment.R.Measure }
+        if shape.Visible and m.L < (measure_num + 2) and m.L ~= m.R and m.R > measure_num then
             if not shape.EntryBased then
-                if m[1] > measure_num then
-                    segment[1].Measure = m[1] - 1
-                    if m[1] == measure_num + 1 then
-                        segment[1].MeasurePos = segment[1].MeasurePos + pos_offset
+                if m.L > measure_num then
+                    segment.L.Measure = m.L - 1
+                    if m.L == measure_num + 1 then
+                        segment.L.MeasurePos = segment.L.MeasurePos + pos_offset
                     end
                 end
-                if m[2] > measure_num then
-                    segment[2].Measure = m[2] - 1
-                    if m[2] == measure_num + 1 then
-                        segment[2].MeasurePos = segment[2].MeasurePos + pos_offset
+                if m.R > measure_num then
+                    segment.R.Measure = m.R - 1
+                    if m.R == measure_num + 1 then
+                        segment.R.MeasurePos = segment.R.MeasurePos + pos_offset
                     end
                 end
                 shape:Save()
 
-            elseif m[1] == (measure_num + 1) or m[2] == (measure_num + 1) then
+            elseif m.L == (measure_num + 1) or m.R == (measure_num + 1) then
                 local entry = {
-                    entry_from_enum(m[1], segment[1].Staff, segment[1].EntryNumber),
-                    entry_from_enum(m[2], segment[2].Staff, segment[2].EntryNumber)
+                    L = entry_from_enum(m.L, segment.L.Staff, segment.L.EntryNumber),
+                    R = entry_from_enum(m.R, segment.R.Staff, segment.R.EntryNumber)
                 }
                 local slur =  {
-                    { staff = segment[1].Staff, m = m[1], shape = shape },
-                    { staff = segment[2].Staff, m = m[2] - 1 },
+                    L = { staff = segment.L.Staff, m = m.L, shape = shape },
+                    R = { staff = segment.R.Staff, m = m.R - 1 },
                 }
-                if m[1] <= measure_num then
-                    slur[1].entry = entry[1]
+                if m.L <= measure_num then
+                    slur.L.entry = entry.L
                 else
-                    slur[1].m = m[1] - 1
-                    slur[1].pos = (entry[1] and entry[1].MeasurePos or 0) + pos_offset
+                    slur.L.m = m.L - 1
+                    slur.L.pos = (entry.L and entry.L.MeasurePos or 0) + pos_offset
                 end
-                if m[2] > measure_num + 1 then
-                    slur[2].entry = entry[2]
+                if m.R > measure_num + 1 then
+                    slur.R.entry = entry.R
                 else
-                    slur[2].pos = (entry[2] and entry[2].MeasurePos or 0) + pos_offset
+                    slur.R.pos = (entry.R and entry.R.MeasurePos or 0) + pos_offset
                 end
                 table.insert(slurs, slur)
             end
@@ -6591,24 +6430,24 @@ function shift_smart_shapes(rgn, measure_num, pos_offset)
     return slurs, saved_expressions
 end
 function make_entry_smartshape(start_entry, end_entry, shape)
-    local seg = { shape:GetTerminateSegmentLeft(), shape:GetTerminateSegmentRight() }
+    local seg = { L = shape:GetTerminateSegmentLeft(), R = shape:GetTerminateSegmentRight() }
     local new_shape = mixin.FCMSmartShape()
-    local new_seg = { new_shape:GetTerminateSegmentLeft(), new_shape:GetTerminateSegmentRight() }
+    local new_seg = { L = new_shape:GetTerminateSegmentLeft(), R = new_shape:GetTerminateSegmentRight() }
     new_shape:SetEntryAttachedFlags(true)
     for _, v in ipairs(
             {"ShapeType", "PresetShape", "LineID", "EngraverSlur",
              "MakeHorizontal", "MaintainAngle", "AvoidAccidentals"} ) do
         new_shape[v] = shape[v]
     end
-    new_seg[1]:SetEntry(start_entry)
-    new_seg[2]:SetEntry(end_entry)
+    new_seg.L:SetEntry(start_entry)
+    new_seg.R:SetEntry(end_entry)
     if not shape:IsSlur() then
-        new_seg[1]:SetCustomOffset(false)
-        new_seg[2]:SetCustomOffset(true)
+        new_seg.L:SetCustomOffset(false)
+        new_seg.R:SetCustomOffset(true)
     end
     for _, v in ipairs( {"Staff", "Measure", "NoteID", "EndpointOffsetX", "EndpointOffsetY" } ) do
-        new_seg[1][v] = seg[1][v]
-        new_seg[2][v] = seg[2][v]
+        new_seg.L[v] = seg.L[v]
+        new_seg.R[v] = seg.R[v]
     end
     local cpa = { old = shape:GetCtrlPointAdjust(), new = new_shape:GetCtrlPointAdjust() }
     if cpa.old.CustomShaped then
@@ -6623,15 +6462,15 @@ end
 function restore_slurs(measure_num, pos_offset, slurs, expressions)
     if #slurs > 0 then
         for _, slur in ipairs(slurs) do
-            for i = 1, 2 do
-                if not slur[i].entry and slur[i].pos ~= nil then
-                    local cell = finale.FCNoteEntryCell(slur[i].m, slur[i].staff)
+            for _, id in ipairs({"L", "R"}) do
+                if not slur[id].entry and slur[id].pos ~= nil then
+                    local cell = finale.FCNoteEntryCell(slur[id].m, slur[id].staff)
                     cell:Load()
-                    slur[i].entry = cell:FindClosestPos(slur[i].pos)
+                    slur[id].entry = cell:FindClosestPos(slur[id].pos)
                 end
             end
-            if slur[1].entry ~= nil and slur[2].entry ~= nil then
-                make_entry_smartshape(slur[1].entry, slur[2].entry, slur[1].shape)
+            if slur.L.entry ~= nil and slur.R.entry ~= nil then
+                make_entry_smartshape(slur.L.entry, slur.R.entry, slur.L.shape)
             end
         end
     end
@@ -6693,7 +6532,8 @@ function restore_tie_ends(region, measure, ties)
 end
 function join_measures(selection)
     if (selection.EndMeasure - selection.StartMeasure) % 2 ~= 1 then
-        finenv.UI():AlertInfo("Please select an EVEN number of measures for the \"Measure Span Join\" action", "User Error")
+        local msg = "Please select an EVEN number of measures for the \"Measure Span Join\" action"
+        finenv.UI():AlertError(msg, "User Error")
         return
     end
 
@@ -6722,7 +6562,7 @@ function join_measures(selection)
             for cnt = 1, 2 do
                 comp_array[cnt] = {}
                 if time_sig[cnt].CompositeTop then
-                    comp_array[cnt] = extract_composite(time_sig[cnt])
+                    comp_array[cnt] = extract_composite_to_array(time_sig[cnt])
                     if not time_sig[cnt].CompositeBottom then
                         comp_array[cnt].bottom = { groups = { bottom[cnt] } }
                     end

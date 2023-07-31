@@ -3230,6 +3230,1292 @@ package.preload["library.lua_compatibility"] = package.preload["library.lua_comp
     end
     return true
 end
+package.preload["library.mixin_helper"] = package.preload["library.mixin_helper"] or function()
+
+
+
+
+    require("library.lua_compatibility")
+    local utils = require("library.utils")
+    local mixin = require("library.mixin")
+    local library = require("library.general_library")
+    local mixin_helper = {}
+    local debug_enabled = finenv.DebugEnabled
+
+    function mixin_helper.is_instance_of(object, ...)
+        if not library.is_finale_object(object) then
+            return false
+        end
+
+
+
+        local class_names = {[0] = {}, [1] = {}, [2] = {}}
+        for i = 1, select("#", ...) do
+            local class_name = select(i, ...)
+
+            local class_type = (mixin.is_fcx_class_name(class_name) and 2) or (mixin.is_fcm_class_name(class_name) and 1) or (mixin.is_fc_class_name(class_name) and 0) or false
+            if class_type then
+
+                class_names[class_type][class_type == 1 and mixin.fcm_to_fc_class_name(class_name) or class_name] = true
+            end
+        end
+        local object_type = (mixin.is_fcx_class_name(object.MixinClass) and 2) or (mixin.is_fcm_class_name(object.MixinClass) and 1) or 0
+        local parent = object_type == 0 and library.get_class_name(object) or object.MixinClass
+
+        if object_type == 2 then
+            repeat
+                if class_names[2][parent] then
+                    return true
+                end
+
+                parent = object.MixinParent
+            until mixin.is_fcm_class_name(parent)
+        end
+
+        if object_type > 0 then
+            parent = mixin.fcm_to_fc_class_name(parent)
+        end
+
+        repeat
+            if (object_type < 2 and class_names[0][parent])
+                or (object_type > 0 and class_names[1][parent])
+            then
+                return true
+            end
+            parent = library.get_parent_class(parent)
+        until not parent
+
+        return false
+    end
+    local function assert_argument_type(levels, argument_number, value, ...)
+        local primary_type = type(value)
+        local secondary_type
+        if primary_type == "number" then
+            secondary_type = math.type(value)
+        end
+        for i = 1, select("#", ...) do
+            local t = select(i, ...)
+            if t == primary_type or (secondary_type and t == secondary_type) then
+                return
+            end
+        end
+        if mixin_helper.is_instance_of(value, ...) then
+            return
+        end
+
+        if library.is_finale_object(value) then
+            secondary_type = value.MixinClass or value.ClassName
+        end
+        error("bad argument #" .. tostring(argument_number) .. " to 'tryfunczzz' (" .. table.concat(table.pack(...), " or ") .. " expected, got " .. (secondary_type or primary_type) .. ")", levels)
+    end
+
+    function mixin_helper.assert_argument_type(argument_number, value, ...)
+        if debug_enabled then
+            assert_argument_type(4, argument_number, value, ...)
+        end
+    end
+
+    function mixin_helper.force_assert_argument_type(argument_number, value, ...)
+        assert_argument_type(4, argument_number, value, ...)
+    end
+    local function assert_func(condition, message, level)
+        if type(condition) == 'function' then
+            condition = condition()
+        end
+        if not condition then
+            error(message, level)
+        end
+    end
+
+    function mixin_helper.assert(condition, message, level)
+        if debug_enabled then
+            assert_func(condition, message, level == 0 and 0 or 2 + (level or 2))
+        end
+    end
+
+    function mixin_helper.force_assert(condition, message, level)
+        assert_func(condition, message, level == 0 and 0 or 2 + (level or 2))
+    end
+
+    function mixin_helper.create_standard_control_event(name)
+        local callbacks = setmetatable({}, {__mode = "k"})
+        local windows = setmetatable({}, {__mode = "k"})
+        local dispatcher = function(control, ...)
+            if not callbacks[control] then
+                return
+            end
+            for _, cb in ipairs(callbacks[control]) do
+                cb(control, ...)
+            end
+        end
+        local function init_window(window)
+            if windows[window] then
+                return
+            end
+            window["Add" .. name](window, dispatcher)
+            windows[window] = true
+        end
+        local function add_func(control, callback)
+            mixin_helper.assert_argument_type(3, callback, "function")
+            local window = control:GetParent()
+            mixin_helper.assert(window, "Cannot add handler to control with no parent window.")
+            mixin_helper.assert(
+                (window.MixinBase or window.MixinClass) == "FCMCustomLuaWindow",
+                "Handlers can only be added if parent window is an instance of FCMCustomLuaWindow")
+            init_window(window)
+            callbacks[control] = callbacks[control] or {}
+            table.insert(callbacks[control], callback)
+        end
+        local function remove_func(control, callback)
+            mixin_helper.assert_argument_type(3, callback, "function")
+            utils.table_remove_first(callbacks[control], callback)
+        end
+        return add_func, remove_func
+    end
+
+    local function unpack_arguments(values, ...)
+        local args = {}
+        for i = 1, select("#", ...) do
+            table.insert(args, values[select(i, ...).name])
+        end
+        return table.unpack(args)
+    end
+    local function get_event_value(target, func)
+        if type(func) == "string" then
+            return target[func](target)
+        else
+            return func(target)
+        end
+    end
+    local function create_change_event(...)
+        local callbacks = setmetatable({}, {__mode = "k"})
+        local params = {...}
+        local event = {}
+        function event.dispatcher(target)
+            if not callbacks[target] then
+                return
+            end
+
+            local current = {}
+            for _, p in ipairs(params) do
+                current[p.name] = get_event_value(target, p.get)
+            end
+            for _, cb in ipairs(callbacks[target].order) do
+
+                local called = false
+                for k, v in pairs(current) do
+                    if current[k] ~= callbacks[target].history[cb][k] then
+                        cb(target, unpack_arguments(callbacks[target].history[cb], table.unpack(params)))
+                        called = true
+                        goto continue
+                    end
+                end
+                ::continue::
+
+                for _, p in ipairs(params) do
+                    current[p.name] = get_event_value(target, p.get)
+                end
+
+
+                if called then
+                    callbacks[target].history[cb] = utils.copy_table(current)
+                end
+            end
+        end
+        function event.add(target, callback, initial)
+            callbacks[target] = callbacks[target] or {order = {}, history = {}}
+            local history = {}
+            for _, p in ipairs(params) do
+                if initial then
+                    if type(p.initial) == "function" then
+                        history[p.name] = p.initial(target)
+                    else
+                        history[p.name] = p.initial
+                    end
+                else
+                    history[p.name] = get_event_value(target, p.get)
+                end
+            end
+            callbacks[target].history[callback] = history
+            table.insert(callbacks[target].order, callback)
+        end
+        function event.remove(target, callback)
+            if not callbacks[target] then
+                return
+            end
+            callbacks[target].history[callback] = nil
+            table.insert(callbacks[target].order, callback)
+        end
+        function event.callback_exists(target, callback)
+            return callbacks[target] and callbacks[target].history[callback] and true or false
+        end
+        function event.has_callbacks(target)
+            return callbacks[target] and #callbacks[target].order > 0 or false
+        end
+
+        function event.history_iterator(control)
+            local cb = callbacks[control]
+            if not cb or #cb.order == 0 then
+                return function()
+                    return nil
+                end
+            end
+            local i = 0
+            local iterator = function()
+                i = i + 1
+                if not cb.order[i] then
+                    return nil
+                end
+                return cb.history[cb.order[i]]
+            end
+            return iterator
+        end
+        function event.target_iterator()
+            return utils.iterate_keys(callbacks)
+        end
+        return event
+    end
+
+    function mixin_helper.create_custom_control_change_event(...)
+        local event = create_change_event(...)
+        local windows = setmetatable({}, {__mode = "k"})
+        local queued = setmetatable({}, {__mode = "k"})
+        local function init_window(window)
+            if windows[window] then
+                return
+            end
+            window:AddInitWindow(
+                function()
+
+                    for control in event.target_iterator() do
+                        event.dispatcher(control)
+                    end
+                end)
+            window:AddHandleCommand(event.dispatcher)
+        end
+        local function add_func(self, callback)
+            mixin_helper.assert_argument_type(2, callback, "function")
+            local window = self:GetParent()
+            mixin_helper.assert(window, "Cannot add handler to self with no parent window.")
+            mixin_helper.assert(
+                (window.MixinBase or window.MixinClass) == "FCMCustomLuaWindow",
+                "Handlers can only be added if parent window is an instance of FCMCustomLuaWindow")
+            mixin_helper.force_assert(
+                not event.callback_exists(self, callback), "The callback has already been added as a handler.")
+            init_window(window)
+            event.add(self, callback, not window:WindowExists__())
+        end
+        local function remove_func(self, callback)
+            mixin_helper.assert_argument_type(2, callback, "function")
+            event.remove(self, callback)
+        end
+        local function trigger_helper(control)
+            if not event.has_callbacks(control) or queued[control] then
+                return
+            end
+            local window = control:GetParent()
+            if window:WindowExists__() then
+                window:QueueHandleCustom(
+                    function()
+                        queued[control] = nil
+                        event.dispatcher(control)
+                    end)
+                queued[control] = true
+            end
+        end
+
+
+
+        local function trigger_func(control, immediate)
+            if type(control) == "boolean" and control then
+                for ctrl in event.target_iterator() do
+                    if immediate then
+                        event.dispatcher(ctrl)
+                    else
+                        trigger_helper(ctrl)
+                    end
+                end
+            else
+                if immediate then
+                    event.dispatcher(control)
+                else
+                    trigger_helper(control)
+                end
+            end
+        end
+        return add_func, remove_func, trigger_func, event.history_iterator
+    end
+
+    function mixin_helper.create_custom_window_change_event(...)
+        local event = create_change_event(...)
+        local queued = setmetatable({}, {__mode = "k"})
+        local function add_func(self, callback)
+            mixin_helper.assert_argument_type(1, self, "FCMCustomLuaWindow")
+            mixin_helper.assert_argument_type(2, callback, "function")
+            mixin_helper.force_assert(
+                not event.callback_exists(self, callback), "The callback has already been added as a handler.")
+            event.add(self, callback)
+        end
+        local function remove_func(self, callback)
+            mixin_helper.assert_argument_type(2, callback, "function")
+            event.remove(self, callback)
+        end
+        local function trigger_helper(window)
+            if not event.has_callbacks(window) or queued[window] or not window:WindowExists__() then
+                return
+            end
+            window:QueueHandleCustom(
+                function()
+                    queued[window] = nil
+                    event.dispatcher(window)
+                end)
+            queued[window] = true
+        end
+        local function trigger_func(window, immediate)
+            if type(window) == "boolean" and window then
+                for win in event.target_iterator() do
+                    if immediate then
+                        event.dispatcher(window)
+                    else
+                        trigger_helper(window)
+                    end
+                end
+            else
+                if immediate then
+                    event.dispatcher(window)
+                else
+                    trigger_helper(window)
+                end
+            end
+        end
+        return add_func, remove_func, trigger_func, event.history_iterator
+    end
+
+    function mixin_helper.to_fcstring(value, fcstr)
+        if mixin_helper.is_instance_of(value, "FCString") then
+            return value
+        end
+        fcstr = fcstr or finale.FCString()
+        fcstr.LuaString = tostring(value)
+        return fcstr
+    end
+
+    function mixin_helper.boolean_to_error(object, method, ...)
+        if not object[method .. "__"](object, ...) then
+            error("'" .. object.MixinClass .. "." .. method .. "' has encountered an error.", 3)
+        end
+    end
+    return mixin_helper
+end
+package.preload["mixin.__FCMUserWindow"] = package.preload["mixin.__FCMUserWindow"] or function()
+
+
+
+    local mixin = require("library.mixin")
+    local mixin_helper = require("library.mixin_helper")
+    local class = {Methods = {}}
+    local methods = class.Methods
+    local temp_str = finale.FCString()
+
+    function methods:GetTitle(title)
+        mixin_helper.assert_argument_type(2, title, "nil", "FCString")
+        local do_return = false
+        if not title then
+            title = temp_str
+            do_return = true
+        end
+        self:GetTitle__(title)
+        if do_return then
+            return title.LuaString
+        end
+    end
+
+    function methods:SetTitle(title)
+        mixin_helper.assert_argument_type(2, title, "string", "number", "FCString")
+        self:SetTitle__(mixin_helper.to_fcstring(title, temp_str))
+    end
+    return class
+end
+package.preload["library.mixin"] = package.preload["library.mixin"] or function()
+
+
+
+    local utils = require("library.utils")
+    local library = require("library.general_library")
+
+    local mixin_public = {}
+
+    local mixin_private = {}
+
+    local mixin_classes = {}
+
+    local mixin_lookup = {}
+
+    local mixin_props = setmetatable({}, {__mode = "k"})
+
+    local reserved_props = {
+        MixinReady = function(class_name) return true end,
+        MixinClass = function(class_name) return class_name end,
+        MixinParent = function(class_name) return mixin_classes[class_name].Parent end,
+        MixinBase = function(class_name) return mixin_classes[class_name].Base end,
+        Init = function(class_name) return mixin_classes[class_name].Init end,
+        __class = function(class_name) return mixin_private.create_method_reflection(class_name, "Methods") end,
+        __static = function(class_name) return mixin_private.create_method_reflection(class_name, "StaticMethods") end,
+        __propget = function(class_name) return mixin_private.create_property_reflection(class_name, "Get") end,
+        __propset = function(class_name) return mixin_private.create_property_reflection(class_name, "Set") end,
+        __disabled = function(class_name) return mixin_classes[class_name].Disabled and utils.copy_table(mixin_classes[class_name].Disabled) or {} end,
+    }
+
+    local instance_reserved_props = {
+        MixinReady = true,
+        MixinClass = true,
+        MixinParent = true,
+        MixinBase = true,
+    }
+
+    local mixin = setmetatable({}, {
+        __newindex = function(t, k, v) end,
+        __index = function(t, k)
+            if mixin_public[k] then return mixin_public[k] end
+            mixin_private.load_mixin_class(k)
+            if not mixin_classes[k] then return nil end
+
+            mixin_public[k] = setmetatable({}, {
+                __newindex = function(tt, kk, vv) end,
+                __index = function(tt, kk)
+                    local value
+                    if mixin_lookup[k].Methods[kk] then
+                        value = mixin_private.create_fluid_proxy(mixin_lookup[k].Methods[kk])
+                    elseif mixin_classes[k].StaticMethods and mixin_classes[k].StaticMethods[kk] then
+                        value = mixin_private.create_proxy(mixin_classes[k].StaticMethods[kk])
+                    elseif mixin_lookup[k].Properties[kk] then
+
+                        value = {}
+                        for kkkk, vvvv in pairs(mixin_lookup[k].Properties[kk]) do
+                            value[kkkk] = mixin_private.create_proxy(vvvv)
+                        end
+                    elseif reserved_props[kk] then
+                        value = reserved_props[kk](k)
+                    end
+                    return value
+                end,
+                __call = function(_, ...)
+                    if mixin_private.is_fcm_class_name(k) then
+                        return mixin_private.create_fcm(k, ...)
+                    else
+                        return mixin_private.create_fcx(k, ...)
+                    end
+                end
+            })
+            return mixin_public[k]
+        end
+    })
+    function mixin_private.is_fc_class_name(class_name)
+        return type(class_name) == "string" and not mixin_private.is_fcm_class_name(class_name) and not mixin_private.is_fcx_class_name(class_name) and (class_name:match("^FC%u") or class_name:match("^__FC%u")) and true or false
+    end
+    function mixin_private.is_fcm_class_name(class_name)
+        return type(class_name) == "string" and (class_name:match("^FCM%u") or class_name:match("^__FCM%u")) and true or false
+    end
+    function mixin_private.is_fcx_class_name(class_name)
+        return type(class_name) == "string" and class_name:match("^FCX%u") and true or false
+    end
+    function mixin_private.fcm_to_fc_class_name(class_name)
+        return string.gsub(class_name, "FCM", "FC", 1)
+    end
+    function mixin_private.fc_to_fcm_class_name(class_name)
+        return string.gsub(class_name, "FC", "FCM", 1)
+    end
+    function mixin_private.assert_valid_property_name(name, error_level, suffix)
+        if type(name) ~= "string" then
+            error("Mixin method and property names must be strings" .. suffix, error_level)
+        end
+        suffix = suffix or ""
+        if name:sub(-2) == "__" then
+            error("Mixin methods and properties cannot end in a double underscore" .. suffix, error_level)
+        elseif name:sub(1, 5):lower() == "mixin" then
+            error("Mixin methods and properties beginning with 'Mixin' are reserved" .. suffix, error_level)
+        elseif reserved_props[name] then
+            error("'" .. name .. "' is a reserved name and cannot be used for propertiea or methods" .. suffix, error_level)
+        end
+    end
+
+    function mixin_private.try_load_module(name)
+        local success, result = pcall(function(c) return require(c) end, name)
+
+        if not success and not result:match("module '[^']-' not found") then
+            error(result, 0)
+        end
+        return success, result
+    end
+    local find_ancestor_with_prop
+    find_ancestor_with_prop = function(class, attr, prop)
+        if class[attr] and class[attr][prop] then
+            return class.Class
+        end
+        if not class.Parent then
+            return nil
+        end
+        return find_ancestor_with_prop(mixin_classes[class.Parent], attr, prop)
+    end
+
+    function mixin_private.load_mixin_class(class_name, create_lookup)
+        if mixin_classes[class_name] then return end
+        local is_fcm = mixin_private.is_fcm_class_name(class_name)
+
+        if not is_fcm and not mixin_private.is_fcx_class_name(class_name) then
+            return
+        end
+        local is_personal_mixin = false
+        local success
+        local result
+
+
+        if finenv.TrustedMode == nil or finenv.TrustedMode == finenv.TrustedModeType.USER_TRUSTED then
+            success, result = mixin_private.try_load_module("personal_mixin." .. class_name)
+        end
+        if success then
+            is_personal_mixin = true
+        else
+            success, result = mixin_private.try_load_module("mixin." .. class_name)
+        end
+        if not success then
+
+            if is_fcm and finale[mixin_private.fcm_to_fc_class_name(class_name)] then
+                result = {}
+            else
+                return
+            end
+        end
+        local error_prefix = (is_personal_mixin and "personal_" or "") .. "mixin." .. class_name
+
+        if type(result) ~= "table" then
+            error("Mixin '" .. error_prefix .. "' is not a table.", 0)
+        end
+        local class = {Class = class_name}
+        local function has_attr(attr, attr_type)
+            if result[attr] == nil then
+                return false
+            end
+            if type(result[attr]) ~= attr_type then
+                error("Mixin '" .. attr .. "' must be a " .. attr_type .. ", " .. type(result[attr]) .. " given (" .. error_prefix .. "." .. attr .. ")", 0)
+            end
+            return true
+        end
+
+        has_attr("Parent", "string")
+
+        if is_fcm then
+
+            class.Parent = library.get_parent_class(mixin_private.fcm_to_fc_class_name(class_name))
+            if class.Parent then
+
+                class.Parent = mixin_private.fc_to_fcm_class_name(class.Parent)
+                mixin_private.load_mixin_class(class.Parent)
+            end
+
+        else
+
+            if not result.Parent then
+                error("Mixin '" .. error_prefix .. "' does not have a parent class defined.", 0)
+            end
+            if not mixin_private.is_fcm_class_name(result.Parent) and not mixin_private.is_fcx_class_name(result.Parent) then
+                error("Mixin parent must be an FCM or FCX class name, '" .. result.Parent .. "' given (" .. error_prefix .. ".Parent)", 0)
+            end
+            mixin_private.load_mixin_class(result.Parent)
+
+            if not mixin_classes[result.Parent] then
+                error("Unable to load mixin '" .. result.Parent .. "' as parent of '" .. error_prefix .. "'", 0)
+            end
+            class.Parent = result.Parent
+
+            class.Base = mixin_classes[result.Parent].Base or result.Parent
+        end
+
+        local lookup = class.Parent and utils.copy_table(mixin_lookup[class.Parent]) or {Methods = {}, Properties = {}, Disabled = {}, FCMInits = {}}
+
+        if has_attr("Init", "function") and is_fcm then
+            table.insert(lookup.FCMInits, result.Init)
+        end
+        class.Init = result.Init
+        if not is_fcm then
+            lookup.FCMInits = nil
+        end
+
+        if has_attr("Disabled", "table") then
+            class.Disabled = {}
+            for _, v in pairs(result.Disabled) do
+                mixin_private.assert_valid_property_name(v, 0, " (" .. error_prefix .. ".Disabled." .. tostring(v) .. ")")
+                class.Disabled[v] = true
+                lookup.Disabled[v] = true
+                lookup.Methods[v] = nil
+                lookup.Properties[v] = nil
+            end
+        end
+        local function find_property_name_clash(name, attr_to_check)
+            for _, attr in pairs(attr_to_check) do
+                if attr == "StaticMethods" or (lookup[attr] and lookup[attr][nane]) then
+                    local cl = find_ancestor_with_prop(class, attr, name)
+                    return cl and (cl .. "." .. attr .. "." .. name) or nil
+                end
+            end
+        end
+        if has_attr("Methods", "table") then
+            class.Methods = {}
+            for k, v in pairs(result.Methods) do
+                mixin_private.assert_valid_property_name(k, 0, " (" .. error_prefix .. ".Methods." .. tostring(k) .. ")")
+                if type(v) ~= "function" then
+                    error("A mixin method must be a function, " .. type(v) .. " given (" .. error_prefix .. ".Methods." .. k .. ")", 0)
+                end
+                if lookup.Disabled[k] then
+                    error("Mixin methods cannot be defined for disabled names (" .. error_prefix .. ".Methods." .. k .. ")", 0)
+                end
+                local clash = find_property_name_clash(k, {"StaticMethods", "Properties"})
+                if clash then
+                    error("A method, static method or property cannot share the same name (" .. error_prefix .. ".Methods." .. k .. " & " .. clash .. ")", 0)
+                end
+                class.Methods[k] = v
+                lookup.Methods[k] = v
+            end
+        end
+        if has_attr("StaticMethods", "table") then
+            class.StaticMethods = {}
+            for k, v in pairs(result.StaticMethods) do
+                mixin_private.assert_valid_property_name(k, 0, " (" .. error_prefix .. ".StaticMethods." .. tostring(k) .. ")")
+                if type(v) ~= "function" then
+                    error("A mixin method must be a function, " .. type(v) .. " given (" .. error_prefix .. ".StaticMethods." .. k .. ")", 0)
+                end
+                if lookup.Disabled[k] then
+                    error("Mixin methods cannot be defined for disabled names (" .. error_prefix .. ".StaticMethods." .. k .. ")", 0)
+                end
+                local clash = find_property_name_clash(k, {"Methods", "Properties"})
+                if clash then
+                    error("A method, static method or property cannot share the same name (" .. error_prefix .. ".StaticMethods." .. k .. " & " .. clash .. ")", 0)
+                end
+                class.Methods[k] = v
+            end
+        end
+        if has_attr("Properties", "table") then
+            class.Properties = {}
+            for k, v in pairs(result.Properties) do
+                mixin_private.assert_valid_property_name(k, 0, " (" .. error_prefix .. ".Properties." .. tostring(k) .. ")")
+                if lookup.Disabled[k] then
+                    error("Mixin properties cannot be defined for disabled names (" .. error_prefix .. ".Properties." .. k .. ")", 0)
+                end
+                local clash = find_property_name_clash(k, {"Methods", "StaticMethods"})
+                if clash then
+                    error("A method, static method or property cannot share the same name (" .. error_prefix .. ".Properties." .. k .. " & " .. clash .. ")", 0)
+                end
+                if type(v) ~= "table" then
+                    error("A mixin property descriptor must be a table, " .. type(v) .. " given (" .. error_prefix .. ".Properties." .. k .. ")", 0)
+                end
+                if not v.Get and not v.Set then
+                    error("A mixin property descriptor must have at least a 'Get' or 'Set' attribute (" .. error_prefix .. ".Properties." .. k .. ")", 0)
+                end
+                class.Properties[k] = {}
+                lookup.Properties[k] = lookup.Properties[k] or {}
+                for kk, vv in pairs(v) do
+                    if kk ~= "Get" and kk ~= "Set" then
+                        error("A mixin property descriptor can only have 'Get' and 'Set' attributes (" .. error_prefix .. ".Properties." .. k .. ")", 0)
+                    end
+                    if type(vv) ~= "function" then
+                        error("A mixin property descriptor attribute must be a function, " .. type(vv) .. " given (" .. error_prefix .. ".Properties." .. k .. "." .. kk .. ")", 0)
+                    end
+                    class.Properties[k][kk] = vv
+                    lookup.Properties[k][kk] = vv
+                end
+            end
+        end
+        mixin_lookup[class_name] = lookup
+        mixin_classes[class_name] = class
+    end
+    function mixin_private.create_method_reflection(class_name, attr)
+        local t = {}
+        if mixin_classes[class_name][attr] then
+            for k, v in pairs(mixin_classes[class_name][attr]) do
+                t[k] = mixin_private.create_proxy(v)
+            end
+        end
+        return t
+    end
+    function mixin_private.create_property_reflection(class_name, attr)
+        local t = {}
+        if mixin_classes[class_name].Properties then
+            for k, v in pairs(mixin_classes[class_name].Properties) do
+                if v[attr] then
+                    t[k] = mixin_private.create_proxy(v[attr])
+                end
+            end
+        end
+        return t
+    end
+
+
+    local function fluid_proxy(t, ...)
+        local n = select("#", ...)
+
+        if n == 0 then
+            return t
+        end
+
+        for i = 1, n do
+            mixin_private.enable_mixin(select(i, ...))
+        end
+        return ...
+    end
+    local function proxy(t, ...)
+        local n = select("#", ...)
+
+        for i = 1, n do
+            mixin_private.enable_mixin(select(i, ...))
+        end
+        return ...
+    end
+
+    function mixin_private.create_fluid_proxy(func)
+        return function(t, ...)
+            return fluid_proxy(t, utils.call_and_rethrow(2, func, t, ...))
+        end
+    end
+    function mixin_private.create_proxy(func)
+        return function(t, ...)
+            return proxy(t, utils.call_and_rethrow(2, func, t, ...))
+        end
+    end
+
+    function mixin_private.enable_mixin(object, fcm_class_name)
+        if mixin_props[object] or not library.is_finale_object(object) then
+            return object
+        end
+        mixin_private.apply_mixin_foundation(object)
+        fcm_class_name = fcm_class_name or mixin_private.fc_to_fcm_class_name(library.get_class_name(object))
+        mixin_private.load_mixin_class(fcm_class_name)
+        mixin_props[object] = {MixinClass = fcm_class_name}
+        for _, v in ipairs(mixin_lookup[fcm_class_name].FCMInits) do
+            v(object)
+        end
+        return object
+    end
+
+
+
+    function mixin_private.apply_mixin_foundation(object)
+        if object.MixinReady then return end
+
+        local meta = getmetatable(object)
+
+        local original_index = meta.__index
+        local original_newindex = meta.__newindex
+        meta.__index = function(t, k)
+
+
+            if k == "MixinReady" then return true end
+
+            if not mixin_props[t] then return original_index(t, k) end
+            local class = mixin_props[t].MixinClass
+            local prop
+
+            if type(k) == "string" and k:sub(-2) == "__" then
+
+                prop = original_index(t, k:sub(1, -3))
+
+            elseif mixin_lookup[class].Properties[k] and mixin_lookup[class].Properties[k].Get then
+                prop = utils.call_and_rethrow(2, mixin_lookup[class].Properties[k].Get, t)
+
+            elseif mixin_props[t][k] ~= nil then
+                prop = utils.copy_table(mixin_props[t][k])
+
+            elseif mixin_lookup[class].Methods[k] then
+                prop = mixin_lookup[class].Methods[k]
+
+            elseif instance_reserved_props[k] then
+                prop = reserved_props[k](class)
+
+            else
+                prop = original_index(t, k)
+            end
+            if type(prop) == "function" then
+                return mixin_private.create_fluid_proxy(prop)
+            end
+            return prop
+        end
+
+
+        meta.__newindex = function(t, k, v)
+
+            if not mixin_props[t] then
+                return original_newindex(t, k, v)
+            end
+            local class = mixin_props[t].MixinClass
+
+            if mixin_lookup[class].Disabled[k] or reserved_props[k] then
+                error("No writable member '" .. tostring(k) .. "'", 2)
+            end
+
+
+            if mixin_lookup[class].Properties[k] then
+                if mixin_lookup[class].Properties[k].Set then
+                    return mixin_lookup[class].Properties[k].Set(t, v)
+                else
+                    return original_newindex(t, k, v)
+                end
+            end
+
+            if type(k) ~= "string" then
+                mixin_props[t][k] = v
+                return
+            end
+
+            if k:sub(-2) == "__" then
+                k = k:sub(1, -3)
+                return original_newindex(t, k, v)
+            end
+            mixin_private.assert_valid_property_name(k, 3)
+            local type_v_original = type(original_index(t, k))
+            local type_v = type(v)
+            local is_mixin_method = mixin_lookup[class].Methods[k] and true or false
+
+            if type_v_original == "nil" then
+                if is_mixin_method and not (type_v == "function" or type_v == "nil") then
+                    error("A mixin method cannot be overridden with a property.", 2)
+                end
+                mixin_props[t][k] = v
+                return
+
+            elseif type_v_original == "function" then
+                if not (type_v == "function" or type_v == "nil") then
+                    error("A Finale PDK method cannot be overridden with a property.", 2)
+                end
+                mixin_props[t][k] = v
+                return
+            end
+
+            return original_newindex(t, k, v)
+        end
+    end
+
+    function mixin_private.subclass(object, class_name)
+        if not library.is_finale_object(object) then
+            error("Object is not a finale object.", 2)
+        end
+        if not utils.call_and_rethrow(2, mixin_private.subclass_helper, object, class_name) then
+            error(class_name .. " is not a subclass of " .. object.MixinClass, 2)
+        end
+        return object
+    end
+
+
+    function mixin_private.subclass_helper(object, class_name, suppress_errors)
+        if not object.MixinClass then
+            if suppress_errors then
+                return false
+            end
+            error("Object is not mixin-enabled.", 2)
+        end
+        if not mixin_private.is_fcx_class_name(class_name) then
+            if suppress_errors then
+                return false
+            end
+            error("Mixins can only be subclassed with an FCX class.", 2)
+        end
+        if object.MixinClass == class_name then return true end
+        mixin_private.load_mixin_class(class_name)
+        if not mixin_classes[class_name] then
+            if suppress_errors then
+                return false
+            end
+            error("Mixin '" .. class_name .. "' not found.", 2)
+        end
+
+        if mixin_private.is_fcm_class_name(mixin_classes[class_name].Parent) and mixin_classes[class_name].Parent ~= object.MixinClass then
+            return false
+        end
+
+        if mixin_classes[class_name].Parent ~= object.MixinClass then
+            if not utils.call_and_rethrow(2, mixin_private.subclass_helper, object, mixin_classes[class_name].Parent) then
+                return false
+            end
+        end
+
+        mixin_props[object].MixinClass = class_name
+
+        if mixin_classes[class_name].Disabled then
+            for k, _ in pairs(mixin_classes[class_name].Disabled) do
+                mixin_props[object][k] = nil
+            end
+        end
+
+        if mixin_classes[class_name].Init then
+            utils.call_and_rethrow(2, mixin_classes[class_name].Init, object)
+        end
+        return true
+    end
+
+    function mixin_private.create_fcm(class_name, ...)
+        mixin_private.load_mixin_class(class_name)
+        if not mixin_classes[class_name] then return nil end
+        return mixin_private.enable_mixin(utils.call_and_rethrow(2, finale[mixin_private.fcm_to_fc_class_name(class_name)], ...))
+    end
+
+    function mixin_private.create_fcx(class_name, ...)
+        mixin_private.load_mixin_class(class_name)
+        if not mixin_classes[class_name] then return nil end
+        local object = mixin_private.create_fcm(mixin_classes[class_name].Base, ...)
+        if not object then return nil end
+        if not utils.call_and_rethrow(2, mixin_private.subclass_helper, object, class_name, false) then
+            return nil
+        end
+        return object
+    end
+
+    mixin_public.is_fc_class_name = mixin_private.is_fc_class_name
+
+    mixin_public.is_fcm_class_name = mixin_private.is_fcm_class_name
+
+    mixin_public.is_fcx_class_name = mixin_private.is_fcx_class_name
+
+    mixin_public.fc_to_fcm_class_name = mixin_private.fc_to_fcm_class_name
+
+    mixin_public.fcm_to_fc_class_name = mixin_private.fcm_to_fc_class_name
+
+    mixin_public.subclass = mixin_private.subclass
+
+    function mixin_public.UI()
+        return mixin_private.enable_mixin(finenv.UI(), "FCMUI")
+    end
+
+    function mixin_public.eachentry(region, layer)
+        local measure = region.StartMeasure
+        local slotno = region:GetStartSlot()
+        local i = 0
+        local layertouse = 0
+        if layer ~= nil then layertouse = layer end
+        local c = mixin.FCMNoteEntryCell(measure, region:CalcStaffNumber(slotno))
+        c:SetLoadLayerMode(layertouse)
+        c:Load()
+        return function ()
+            while true do
+                i = i + 1;
+                local returnvalue = c:GetItemAt(i - 1)
+                if returnvalue ~= nil then
+                    if (region:IsEntryPosWithin(returnvalue)) then return returnvalue end
+                else
+                    measure = measure + 1
+                    if measure > region.EndMeasure then
+                        measure = region.StartMeasure
+                        slotno = slotno + 1
+                        if (slotno > region:GetEndSlot()) then return nil end
+                        c = mixin.FCMNoteEntryCell(measure, region:CalcStaffNumber(slotno))
+                        c:SetLoadLayerMode(layertouse)
+                        c:Load()
+                        i = 0
+                    else
+                        c = mixin.FCMNoteEntryCell(measure, region:CalcStaffNumber(slotno))
+                        c:SetLoadLayerMode(layertouse)
+                        c:Load()
+                        i = 0
+                    end
+                end
+            end
+        end
+    end
+    return mixin
+end
+package.preload["library.configuration"] = package.preload["library.configuration"] or function()
+
+
+
+    local configuration = {}
+    local utils = require("library.utils")
+    local script_settings_dir = "script_settings"
+    local comment_marker = "--"
+    local parameter_delimiter = "="
+    local path_delimiter = "/"
+    local file_exists = function(file_path)
+        local f = io.open(file_path, "r")
+        if nil ~= f then
+            io.close(f)
+            return true
+        end
+        return false
+    end
+    parse_parameter = function(val_string)
+        if "\"" == val_string:sub(1, 1) and "\"" == val_string:sub(#val_string, #val_string) then
+            return string.gsub(val_string, "\"(.+)\"", "%1")
+        elseif "'" == val_string:sub(1, 1) and "'" == val_string:sub(#val_string, #val_string) then
+            return string.gsub(val_string, "'(.+)'", "%1")
+        elseif "{" == val_string:sub(1, 1) and "}" == val_string:sub(#val_string, #val_string) then
+            return load("return " .. val_string)()
+        elseif "true" == val_string then
+            return true
+        elseif "false" == val_string then
+            return false
+        end
+        return tonumber(val_string)
+    end
+    local get_parameters_from_file = function(file_path, parameter_list)
+        local file_parameters = {}
+        if not file_exists(file_path) then
+            return false
+        end
+        for line in io.lines(file_path) do
+            local comment_at = string.find(line, comment_marker, 1, true)
+            if nil ~= comment_at then
+                line = string.sub(line, 1, comment_at - 1)
+            end
+            local delimiter_at = string.find(line, parameter_delimiter, 1, true)
+            if nil ~= delimiter_at then
+                local name = utils.trim(string.sub(line, 1, delimiter_at - 1))
+                local val_string = utils.trim(string.sub(line, delimiter_at + 1))
+                file_parameters[name] = parse_parameter(val_string)
+            end
+        end
+        local function process_table(param_table, param_prefix)
+            param_prefix = param_prefix and param_prefix.."." or ""
+            for param_name, param_val in pairs(param_table) do
+                local file_param_name = param_prefix .. param_name
+                local file_param_val = file_parameters[file_param_name]
+                if nil ~= file_param_val then
+                    param_table[param_name] = file_param_val
+                elseif type(param_val) == "table" then
+                        process_table(param_val, param_prefix..param_name)
+                end
+            end
+        end
+        process_table(parameter_list)
+        return true
+    end
+
+    function configuration.get_parameters(file_name, parameter_list)
+        local path = ""
+        if finenv.IsRGPLua then
+            path = finenv.RunningLuaFolderPath()
+        else
+            local str = finale.FCString()
+            str:SetRunningLuaFolderPath()
+            path = str.LuaString
+        end
+        local file_path = path .. script_settings_dir .. path_delimiter .. file_name
+        return get_parameters_from_file(file_path, parameter_list)
+    end
+
+
+    local calc_preferences_filepath = function(script_name)
+        local str = finale.FCString()
+        str:SetUserOptionsPath()
+        local folder_name = str.LuaString
+        if not finenv.IsRGPLua and finenv.UI():IsOnMac() then
+
+            folder_name = os.getenv("HOME") .. folder_name:sub(2)
+        end
+        if finenv.UI():IsOnWindows() then
+            folder_name = folder_name .. path_delimiter .. "FinaleLua"
+        end
+        local file_path = folder_name .. path_delimiter
+        if finenv.UI():IsOnMac() then
+            file_path = file_path .. "com.finalelua."
+        end
+        file_path = file_path .. script_name .. ".settings.txt"
+        return file_path, folder_name
+    end
+
+    function configuration.save_user_settings(script_name, parameter_list)
+        local file_path, folder_path = calc_preferences_filepath(script_name)
+        local file = io.open(file_path, "w")
+        if not file and finenv.UI():IsOnWindows() then
+
+            local osutils = finenv.EmbeddedLuaOSUtils and utils.require_embedded("luaosutils")
+            if osutils then
+                osutils.process.make_dir(folder_path)
+            else
+                os.execute('mkdir "' .. folder_path ..'"')
+            end
+            file = io.open(file_path, "w")
+        end
+        if not file then
+            return false
+        end
+        file:write("-- User settings for " .. script_name .. ".lua\n\n")
+        for k,v in pairs(parameter_list) do
+            if type(v) == "string" then
+                v = "\"" .. v .."\""
+            else
+                v = tostring(v)
+            end
+            file:write(k, " = ", v, "\n")
+        end
+        file:close()
+        return true
+    end
+
+    function configuration.get_user_settings(script_name, parameter_list, create_automatically)
+        if create_automatically == nil then create_automatically = true end
+        local exists = get_parameters_from_file(calc_preferences_filepath(script_name), parameter_list)
+        if not exists and create_automatically then
+            configuration.save_user_settings(script_name, parameter_list)
+        end
+        return exists
+    end
+    return configuration
+end
+package.preload["library.utils"] = package.preload["library.utils"] or function()
+
+    local utils = {}
+
+
+
+
+    function utils.copy_table(t)
+        if type(t) == "table" then
+            local new = {}
+            for k, v in pairs(t) do
+                new[utils.copy_table(k)] = utils.copy_table(v)
+            end
+            setmetatable(new, utils.copy_table(getmetatable(t)))
+            return new
+        else
+            return t
+        end
+    end
+
+    function utils.table_remove_first(t, value)
+        for k = 1, #t do
+            if t[k] == value then
+                table.remove(t, k)
+                return
+            end
+        end
+    end
+
+    function utils.iterate_keys(t)
+        local a, b, c = pairs(t)
+        return function()
+            c = a(b, c)
+            return c
+        end
+    end
+
+    function utils.round(value, places)
+        places = places or 0
+        local multiplier = 10^places
+        local ret = math.floor(value * multiplier + 0.5)
+
+        return places == 0 and ret or ret / multiplier
+    end
+
+    function utils.to_integer_if_whole(value)
+        local int = math.floor(value)
+        return value == int and int or value
+    end
+
+    function utils.calc_roman_numeral(num)
+        local thousands = {'M','MM','MMM'}
+        local hundreds = {'C','CC','CCC','CD','D','DC','DCC','DCCC','CM'}
+        local tens = {'X','XX','XXX','XL','L','LX','LXX','LXXX','XC'}	
+        local ones = {'I','II','III','IV','V','VI','VII','VIII','IX'}
+        local roman_numeral = ''
+        if math.floor(num/1000)>0 then roman_numeral = roman_numeral..thousands[math.floor(num/1000)] end
+        if math.floor((num%1000)/100)>0 then roman_numeral=roman_numeral..hundreds[math.floor((num%1000)/100)] end
+        if math.floor((num%100)/10)>0 then roman_numeral=roman_numeral..tens[math.floor((num%100)/10)] end
+        if num%10>0 then roman_numeral = roman_numeral..ones[num%10] end
+        return roman_numeral
+    end
+
+    function utils.calc_ordinal(num)
+        local units = num % 10
+        local tens = num % 100
+        if units == 1 and tens ~= 11 then
+            return num .. "st"
+        elseif units == 2 and tens ~= 12 then
+            return num .. "nd"
+        elseif units == 3 and tens ~= 13 then
+            return num .. "rd"
+        end
+        return num .. "th"
+    end
+
+    function utils.calc_alphabet(num)
+        local letter = ((num - 1) % 26) + 1
+        local n = math.floor((num - 1) / 26)
+        return string.char(64 + letter) .. (n > 0 and n or "")
+    end
+
+    function utils.clamp(num, minimum, maximum)
+        return math.min(math.max(num, minimum), maximum)
+    end
+
+    function utils.ltrim(str)
+        return string.match(str, "^%s*(.*)")
+    end
+
+    function utils.rtrim(str)
+        return string.match(str, "(.-)%s*$")
+    end
+
+    function utils.trim(str)
+        return utils.ltrim(utils.rtrim(str))
+    end
+
+    local pcall_wrapper
+    local rethrow_placeholder = "tryfunczzz"
+    local pcall_line = debug.getinfo(1, "l").currentline + 2
+    function utils.call_and_rethrow(levels, tryfunczzz, ...)
+        return pcall_wrapper(levels, pcall(function(...) return 1, tryfunczzz(...) end, ...))
+
+    end
+
+    local source = debug.getinfo(1, "S").source
+    local source_is_file = source:sub(1, 1) == "@"
+    if source_is_file then
+        source = source:sub(2)
+    end
+
+    pcall_wrapper = function(levels, success, result, ...)
+        if not success then
+            local file
+            local line
+            local msg
+            file, line, msg = result:match("([a-zA-Z]-:?[^:]+):([0-9]+): (.+)")
+            msg = msg or result
+            local file_is_truncated = file and file:sub(1, 3) == "..."
+            file = file_is_truncated and file:sub(4) or file
+
+
+
+            if file
+                and line
+                and source_is_file
+                and (file_is_truncated and source:sub(-1 * file:len()) == file or file == source)
+                and tonumber(line) == pcall_line
+            then
+                local d = debug.getinfo(levels, "n")
+
+                msg = msg:gsub("'" .. rethrow_placeholder .. "'", "'" .. (d.name or "") .. "'")
+
+                if d.namewhat == "method" then
+                    local arg = msg:match("^bad argument #(%d+)")
+                    if arg then
+                        msg = msg:gsub("#" .. arg, "#" .. tostring(tonumber(arg) - 1), 1)
+                    end
+                end
+                error(msg, levels + 1)
+
+
+            else
+                error(result, 0)
+            end
+        end
+        return ...
+    end
+
+    function utils.rethrow_placeholder()
+        return "'" .. rethrow_placeholder .. "'"
+    end
+
+    function utils.require_embedded(library_name)
+        return require(library_name)
+    end
+    return utils
+end
 package.preload["library.client"] = package.preload["library.client"] or function()
 
     local client = {}
@@ -3743,1424 +5029,9 @@ package.preload["library.general_library"] = package.preload["library.general_li
     end
     return library
 end
-package.preload["library.mixin_helper"] = package.preload["library.mixin_helper"] or function()
-
-
-
-
-    require("library.lua_compatibility")
-    local utils = require("library.utils")
-    local mixin = require("library.mixin")
-    local library = require("library.general_library")
-    local mixin_helper = {}
-    local debug_enabled = finenv.DebugEnabled
-
-    function mixin_helper.is_instance_of(object, ...)
-        if not library.is_finale_object(object) then
-            return false
-        end
-
-
-
-        local class_names = {[0] = {}, [1] = {}, [2] = {}}
-        for i = 1, select("#", ...) do
-            local class_name = select(i, ...)
-
-            local class_type = (mixin.is_fcx_class_name(class_name) and 2) or (mixin.is_fcm_class_name(class_name) and 1) or (mixin.is_fc_class_name(class_name) and 0) or false
-            if class_type then
-
-                class_names[class_type][class_type == 1 and mixin.fcm_to_fc_class_name(class_name) or class_name] = true
-            end
-        end
-        local object_type = (mixin.is_fcx_class_name(object.MixinClass) and 2) or (mixin.is_fcm_class_name(object.MixinClass) and 1) or 0
-        local parent = object_type == 0 and library.get_class_name(object) or object.MixinClass
-
-        if object_type == 2 then
-            repeat
-                if class_names[2][parent] then
-                    return true
-                end
-
-                parent = object.MixinParent
-            until mixin.is_fcm_class_name(parent)
-        end
-
-        if object_type > 0 then
-            parent = mixin.fcm_to_fc_class_name(parent)
-        end
-
-        repeat
-            if (object_type < 2 and class_names[0][parent])
-                or (object_type > 0 and class_names[1][parent])
-            then
-                return true
-            end
-            parent = library.get_parent_class(parent)
-        until not parent
-
-        return false
-    end
-    local function assert_argument_type(levels, argument_number, value, ...)
-        local primary_type = type(value)
-        local secondary_type
-        if primary_type == "number" then
-            secondary_type = math.type(value)
-        end
-        for i = 1, select("#", ...) do
-            local t = select(i, ...)
-            if t == primary_type or (secondary_type and t == secondary_type) then
-                return
-            end
-        end
-        if mixin_helper.is_instance_of(value, ...) then
-            return
-        end
-
-        if library.is_finale_object(value) then
-            secondary_type = value.MixinClass or value.ClassName
-        end
-        error("bad argument #" .. tostring(argument_number) .. " to 'tryfunczzz' (" .. table.concat(table.pack(...), " or ") .. " expected, got " .. (secondary_type or primary_type) .. ")", levels)
-    end
-
-    function mixin_helper.assert_argument_type(argument_number, value, ...)
-        if debug_enabled then
-            assert_argument_type(4, argument_number, value, ...)
-        end
-    end
-
-    function mixin_helper.force_assert_argument_type(argument_number, value, ...)
-        assert_argument_type(4, argument_number, value, ...)
-    end
-    local function assert_func(condition, message, level)
-        if type(condition) == 'function' then
-            condition = condition()
-        end
-        if not condition then
-            error(message, level)
-        end
-    end
-
-    function mixin_helper.assert(condition, message, level)
-        if debug_enabled then
-            assert_func(condition, message, level == 0 and 0 or 2 + (level or 2))
-        end
-    end
-
-    function mixin_helper.force_assert(condition, message, level)
-        assert_func(condition, message, level == 0 and 0 or 2 + (level or 2))
-    end
-
-    function mixin_helper.create_standard_control_event(name)
-        local callbacks = setmetatable({}, {__mode = "k"})
-        local windows = setmetatable({}, {__mode = "k"})
-        local dispatcher = function(control, ...)
-            if not callbacks[control] then
-                return
-            end
-            for _, cb in ipairs(callbacks[control]) do
-                cb(control, ...)
-            end
-        end
-        local function init_window(window)
-            if windows[window] then
-                return
-            end
-            window["Add" .. name](window, dispatcher)
-            windows[window] = true
-        end
-        local function add_func(control, callback)
-            mixin_helper.assert_argument_type(3, callback, "function")
-            local window = control:GetParent()
-            mixin_helper.assert(window, "Cannot add handler to control with no parent window.")
-            mixin_helper.assert(
-                (window.MixinBase or window.MixinClass) == "FCMCustomLuaWindow",
-                "Handlers can only be added if parent window is an instance of FCMCustomLuaWindow")
-            init_window(window)
-            callbacks[control] = callbacks[control] or {}
-            table.insert(callbacks[control], callback)
-        end
-        local function remove_func(control, callback)
-            mixin_helper.assert_argument_type(3, callback, "function")
-            utils.table_remove_first(callbacks[control], callback)
-        end
-        return add_func, remove_func
-    end
-
-    local function unpack_arguments(values, ...)
-        local args = {}
-        for i = 1, select("#", ...) do
-            table.insert(args, values[select(i, ...).name])
-        end
-        return table.unpack(args)
-    end
-    local function get_event_value(target, func)
-        if type(func) == "string" then
-            return target[func](target)
-        else
-            return func(target)
-        end
-    end
-    local function create_change_event(...)
-        local callbacks = setmetatable({}, {__mode = "k"})
-        local params = {...}
-        local event = {}
-        function event.dispatcher(target)
-            if not callbacks[target] then
-                return
-            end
-
-            local current = {}
-            for _, p in ipairs(params) do
-                current[p.name] = get_event_value(target, p.get)
-            end
-            for _, cb in ipairs(callbacks[target].order) do
-
-                local called = false
-                for k, v in pairs(current) do
-                    if current[k] ~= callbacks[target].history[cb][k] then
-                        cb(target, unpack_arguments(callbacks[target].history[cb], table.unpack(params)))
-                        called = true
-                        goto continue
-                    end
-                end
-                ::continue::
-
-                for _, p in ipairs(params) do
-                    current[p.name] = get_event_value(target, p.get)
-                end
-
-
-                if called then
-                    callbacks[target].history[cb] = utils.copy_table(current)
-                end
-            end
-        end
-        function event.add(target, callback, initial)
-            callbacks[target] = callbacks[target] or {order = {}, history = {}}
-            local history = {}
-            for _, p in ipairs(params) do
-                if initial then
-                    if type(p.initial) == "function" then
-                        history[p.name] = p.initial(target)
-                    else
-                        history[p.name] = p.initial
-                    end
-                else
-                    history[p.name] = get_event_value(target, p.get)
-                end
-            end
-            callbacks[target].history[callback] = history
-            table.insert(callbacks[target].order, callback)
-        end
-        function event.remove(target, callback)
-            if not callbacks[target] then
-                return
-            end
-            callbacks[target].history[callback] = nil
-            table.insert(callbacks[target].order, callback)
-        end
-        function event.callback_exists(target, callback)
-            return callbacks[target] and callbacks[target].history[callback] and true or false
-        end
-        function event.has_callbacks(target)
-            return callbacks[target] and #callbacks[target].order > 0 or false
-        end
-
-        function event.history_iterator(control)
-            local cb = callbacks[control]
-            if not cb or #cb.order == 0 then
-                return function()
-                    return nil
-                end
-            end
-            local i = 0
-            local iterator = function()
-                i = i + 1
-                if not cb.order[i] then
-                    return nil
-                end
-                return cb.history[cb.order[i]]
-            end
-            return iterator
-        end
-        function event.target_iterator()
-            return utils.iterate_keys(callbacks)
-        end
-        return event
-    end
-
-    function mixin_helper.create_custom_control_change_event(...)
-        local event = create_change_event(...)
-        local windows = setmetatable({}, {__mode = "k"})
-        local queued = setmetatable({}, {__mode = "k"})
-        local function init_window(window)
-            if windows[window] then
-                return
-            end
-            window:AddInitWindow(
-                function()
-
-                    for control in event.target_iterator() do
-                        event.dispatcher(control)
-                    end
-                end)
-            window:AddHandleCommand(event.dispatcher)
-        end
-        local function add_func(self, callback)
-            mixin_helper.assert_argument_type(2, callback, "function")
-            local window = self:GetParent()
-            mixin_helper.assert(window, "Cannot add handler to self with no parent window.")
-            mixin_helper.assert(
-                (window.MixinBase or window.MixinClass) == "FCMCustomLuaWindow",
-                "Handlers can only be added if parent window is an instance of FCMCustomLuaWindow")
-            mixin_helper.force_assert(
-                not event.callback_exists(self, callback), "The callback has already been added as a handler.")
-            init_window(window)
-            event.add(self, callback, not window:WindowExists__())
-        end
-        local function remove_func(self, callback)
-            mixin_helper.assert_argument_type(2, callback, "function")
-            event.remove(self, callback)
-        end
-        local function trigger_helper(control)
-            if not event.has_callbacks(control) or queued[control] then
-                return
-            end
-            local window = control:GetParent()
-            if window:WindowExists__() then
-                window:QueueHandleCustom(
-                    function()
-                        queued[control] = nil
-                        event.dispatcher(control)
-                    end)
-                queued[control] = true
-            end
-        end
-
-
-
-        local function trigger_func(control, immediate)
-            if type(control) == "boolean" and control then
-                for ctrl in event.target_iterator() do
-                    if immediate then
-                        event.dispatcher(ctrl)
-                    else
-                        trigger_helper(ctrl)
-                    end
-                end
-            else
-                if immediate then
-                    event.dispatcher(control)
-                else
-                    trigger_helper(control)
-                end
-            end
-        end
-        return add_func, remove_func, trigger_func, event.history_iterator
-    end
-
-    function mixin_helper.create_custom_window_change_event(...)
-        local event = create_change_event(...)
-        local queued = setmetatable({}, {__mode = "k"})
-        local function add_func(self, callback)
-            mixin_helper.assert_argument_type(1, self, "FCMCustomLuaWindow")
-            mixin_helper.assert_argument_type(2, callback, "function")
-            mixin_helper.force_assert(
-                not event.callback_exists(self, callback), "The callback has already been added as a handler.")
-            event.add(self, callback)
-        end
-        local function remove_func(self, callback)
-            mixin_helper.assert_argument_type(2, callback, "function")
-            event.remove(self, callback)
-        end
-        local function trigger_helper(window)
-            if not event.has_callbacks(window) or queued[window] or not window:WindowExists__() then
-                return
-            end
-            window:QueueHandleCustom(
-                function()
-                    queued[window] = nil
-                    event.dispatcher(window)
-                end)
-            queued[window] = true
-        end
-        local function trigger_func(window, immediate)
-            if type(window) == "boolean" and window then
-                for win in event.target_iterator() do
-                    if immediate then
-                        event.dispatcher(window)
-                    else
-                        trigger_helper(window)
-                    end
-                end
-            else
-                if immediate then
-                    event.dispatcher(window)
-                else
-                    trigger_helper(window)
-                end
-            end
-        end
-        return add_func, remove_func, trigger_func, event.history_iterator
-    end
-
-    function mixin_helper.to_fcstring(value, fcstr)
-        if mixin_helper.is_instance_of(value, "FCString") then
-            return value
-        end
-        fcstr = fcstr or finale.FCString()
-        fcstr.LuaString = tostring(value)
-        return fcstr
-    end
-
-    function mixin_helper.boolean_to_error(object, method, ...)
-        if not object[method .. "__"](object, ...) then
-            error("'" .. object.MixinClass .. "." .. method .. "' has encountered an error.", 3)
-        end
-    end
-    return mixin_helper
-end
-package.preload["mixin.__FCMUserWindow"] = package.preload["mixin.__FCMUserWindow"] or function()
-
-
-
-    local mixin = require("library.mixin")
-    local mixin_helper = require("library.mixin_helper")
-    local class = {Methods = {}}
-    local methods = class.Methods
-    local temp_str = finale.FCString()
-
-    function methods:GetTitle(title)
-        mixin_helper.assert_argument_type(2, title, "nil", "FCString")
-        local do_return = false
-        if not title then
-            title = temp_str
-            do_return = true
-        end
-        self:GetTitle__(title)
-        if do_return then
-            return title.LuaString
-        end
-    end
-
-    function methods:SetTitle(title)
-        mixin_helper.assert_argument_type(2, title, "string", "number", "FCString")
-        self:SetTitle__(mixin_helper.to_fcstring(title, temp_str))
-    end
-    return class
-end
-package.preload["library.mixin"] = package.preload["library.mixin"] or function()
-
-
-
-
-
-    local utils = require("library.utils")
-    local library = require("library.general_library")
-
-
-    local mixin_public = {}
-
-    local mixin_private = {}
-
-    local mixin_classes = {}
-
-    local mixin_lookup = {}
-
-    local mixin_props = setmetatable({}, {__mode = "k"})
-
-
-    local reserved_props = {
-        MixinReady = function(class_name) return true end,
-        MixinClass = function(class_name) return class_name end,
-        MixinParent = function(class_name) return mixin_classes[class_name].Parent end,
-        MixinBase = function(class_name) return mixin_classes[class_name].Base end,
-        Init = function(class_name) return mixin_classes[class_name].Init end,
-        __class = function(class_name) return mixin_private.create_method_reflection(class_name, "Methods") end,
-        __static = function(class_name) return mixin_private.create_method_reflection(class_name, "StaticMethods") end,
-        __propget = function(class_name) return mixin_private.create_property_reflection(class_name, "Get") end,
-        __propset = function(class_name) return mixin_private.create_property_reflection(class_name, "Set") end,
-        __disabled = function(class_name) return mixin_classes[class_name].Disabled and utils.copy_table(mixin_classes[class_name].Disabled) or {} end,
-    }
-
-
-    local instance_reserved_props = {
-        MixinReady = true,
-        MixinClass = true,
-        MixinParent = true,
-        MixinBase = true,
-    }
-
-
-    local mixin = setmetatable({}, {
-        __newindex = function(t, k, v) end,
-        __index = function(t, k)
-            if mixin_public[k] then return mixin_public[k] end
-
-            mixin_private.load_mixin_class(k)
-            if not mixin_classes[k] then return nil end
-
-
-            mixin_public[k] = setmetatable({}, {
-                __newindex = function(tt, kk, vv) end,
-                __index = function(tt, kk)
-                    local value
-
-                    if mixin_lookup[k].Methods[kk] then
-                        value = mixin_private.create_fluid_proxy(mixin_lookup[k].Methods[kk])
-                    elseif mixin_classes[k].StaticMethods and mixin_classes[k].StaticMethods[kk] then
-                        value = mixin_private.create_proxy(mixin_classes[k].StaticMethods[kk])
-                    elseif mixin_lookup[k].Properties[kk] then
-
-                        value = {}
-                        for kkkk, vvvv in pairs(mixin_lookup[k].Properties[kk]) do
-                            value[kkkk] = mixin_private.create_proxy(vvvv)
-                        end
-                    elseif reserved_props[kk] then
-                        value = reserved_props[kk](k)
-                    end
-
-                    return value
-                end,
-                __call = function(_, ...)
-                    if mixin_private.is_fcm_class_name(k) then
-                        return mixin_private.create_fcm(k, ...)
-                    else
-                        return mixin_private.create_fcx(k, ...)
-                    end
-                end
-            })
-
-            return mixin_public[k]
-        end
-    })
-
-    function mixin_private.is_fc_class_name(class_name)
-        return type(class_name) == "string" and not mixin_private.is_fcm_class_name(class_name) and not mixin_private.is_fcx_class_name(class_name) and (class_name:match("^FC%u") or class_name:match("^__FC%u")) and true or false
-    end
-
-    function mixin_private.is_fcm_class_name(class_name)
-        return type(class_name) == "string" and (class_name:match("^FCM%u") or class_name:match("^__FCM%u")) and true or false
-    end
-
-    function mixin_private.is_fcx_class_name(class_name)
-        return type(class_name) == "string" and class_name:match("^FCX%u") and true or false
-    end
-
-    function mixin_private.fcm_to_fc_class_name(class_name)
-        return string.gsub(class_name, "FCM", "FC", 1)
-    end
-
-    function mixin_private.fc_to_fcm_class_name(class_name)
-        return string.gsub(class_name, "FC", "FCM", 1)
-    end
-
-    function mixin_private.assert_valid_property_name(name, error_level, suffix)
-        if type(name) ~= "string" then
-            error("Mixin method and property names must be strings" .. suffix, error_level)
-        end
-
-        suffix = suffix or ""
-
-        if name:sub(-2) == "__" then
-            error("Mixin methods and properties cannot end in a double underscore" .. suffix, error_level)
-        elseif name:sub(1, 5):lower() == "mixin" then
-            error("Mixin methods and properties beginning with 'Mixin' are reserved" .. suffix, error_level)
-        elseif reserved_props[name] then
-            error("'" .. name .. "' is a reserved name and cannot be used for propertiea or methods" .. suffix, error_level)
-        end
-    end
-
-
-    function mixin_private.try_load_module(name)
-        local success, result = pcall(function(c) return require(c) end, name)
-
-
-        if not success and not result:match("module '[^']-' not found") then
-            error(result, 0)
-        end
-
-        return success, result
-    end
-
-    local find_ancestor_with_prop
-    find_ancestor_with_prop = function(class, attr, prop)
-        if class[attr] and class[attr][prop] then
-            return class.Class
-        end
-        if not class.Parent then
-            return nil
-        end
-        return find_ancestor_with_prop(mixin_classes[class.Parent], attr, prop)
-    end
-
-
-    function mixin_private.load_mixin_class(class_name, create_lookup)
-        if mixin_classes[class_name] then return end
-
-        local is_fcm = mixin_private.is_fcm_class_name(class_name)
-
-
-        if not is_fcm and not mixin_private.is_fcx_class_name(class_name) then
-            return
-        end
-
-        local is_personal_mixin = false
-        local success
-        local result
-
-
-
-        if finenv.TrustedMode == nil or finenv.TrustedMode == finenv.TrustedModeType.USER_TRUSTED then
-            success, result = mixin_private.try_load_module("personal_mixin." .. class_name)
-        end
-
-        if success then
-            is_personal_mixin = true
-        else
-            success, result = mixin_private.try_load_module("mixin." .. class_name)
-        end
-
-        if not success then
-
-            if is_fcm and finale[mixin_private.fcm_to_fc_class_name(class_name)] then
-                result = {}
-            else
-                return
-            end
-        end
-
-        local error_prefix = (is_personal_mixin and "personal_" or "") .. "mixin." .. class_name
-
-
-        if type(result) ~= "table" then
-            error("Mixin '" .. error_prefix .. "' is not a table.", 0)
-        end
-
-        local class = {Class = class_name}
-
-        local function has_attr(attr, attr_type)
-            if result[attr] == nil then
-                return false
-            end
-            if type(result[attr]) ~= attr_type then
-                error("Mixin '" .. attr .. "' must be a " .. attr_type .. ", " .. type(result[attr]) .. " given (" .. error_prefix .. "." .. attr .. ")", 0)
-            end
-            return true
-        end
-
-
-        has_attr("Parent", "string")
-
-
-        if is_fcm then
-
-            class.Parent = library.get_parent_class(mixin_private.fcm_to_fc_class_name(class_name))
-
-            if class.Parent then
-
-                class.Parent = mixin_private.fc_to_fcm_class_name(class.Parent)
-
-                mixin_private.load_mixin_class(class.Parent)
-            end
-
-
-        else
-
-            if not result.Parent then
-                error("Mixin '" .. error_prefix .. "' does not have a parent class defined.", 0)
-            end
-
-            if not mixin_private.is_fcm_class_name(result.Parent) and not mixin_private.is_fcx_class_name(result.Parent) then
-                error("Mixin parent must be an FCM or FCX class name, '" .. result.Parent .. "' given (" .. error_prefix .. ".Parent)", 0)
-            end
-
-            mixin_private.load_mixin_class(result.Parent)
-
-
-            if not mixin_classes[result.Parent] then
-                error("Unable to load mixin '" .. result.Parent .. "' as parent of '" .. error_prefix .. "'", 0)
-            end
-
-            class.Parent = result.Parent
-
-
-            class.Base = mixin_classes[result.Parent].Base or result.Parent
-        end
-
-
-        local lookup = class.Parent and utils.copy_table(mixin_lookup[class.Parent]) or {Methods = {}, Properties = {}, Disabled = {}, FCMInits = {}}
-
-
-        if has_attr("Init", "function") and is_fcm then
-            table.insert(lookup.FCMInits, result.Init)
-        end
-        class.Init = result.Init
-        if not is_fcm then
-            lookup.FCMInits = nil
-        end
-
-
-        if has_attr("Disabled", "table") then
-            class.Disabled = {}
-            for _, v in pairs(result.Disabled) do
-                mixin_private.assert_valid_property_name(v, 0, " (" .. error_prefix .. ".Disabled." .. tostring(v) .. ")")
-                class.Disabled[v] = true
-                lookup.Disabled[v] = true
-                lookup.Methods[v] = nil
-                lookup.Properties[v] = nil
-            end
-        end
-
-        local function find_property_name_clash(name, attr_to_check)
-            for _, attr in pairs(attr_to_check) do
-                if attr == "StaticMethods" or (lookup[attr] and lookup[attr][nane]) then
-                    local cl = find_ancestor_with_prop(class, attr, name)
-                    return cl and (cl .. "." .. attr .. "." .. name) or nil
-                end
-            end
-        end
-
-        if has_attr("Methods", "table") then
-            class.Methods = {}
-            for k, v in pairs(result.Methods) do
-                mixin_private.assert_valid_property_name(k, 0, " (" .. error_prefix .. ".Methods." .. tostring(k) .. ")")
-                if type(v) ~= "function" then
-                    error("A mixin method must be a function, " .. type(v) .. " given (" .. error_prefix .. ".Methods." .. k .. ")", 0)
-                end
-                if lookup.Disabled[k] then
-                    error("Mixin methods cannot be defined for disabled names (" .. error_prefix .. ".Methods." .. k .. ")", 0)
-                end
-                local clash = find_property_name_clash(k, {"StaticMethods", "Properties"})
-                if clash then
-                    error("A method, static method or property cannot share the same name (" .. error_prefix .. ".Methods." .. k .. " & " .. clash .. ")", 0)
-                end
-                class.Methods[k] = v
-                lookup.Methods[k] = v
-            end
-        end
-
-        if has_attr("StaticMethods", "table") then
-            class.StaticMethods = {}
-            for k, v in pairs(result.StaticMethods) do
-                mixin_private.assert_valid_property_name(k, 0, " (" .. error_prefix .. ".StaticMethods." .. tostring(k) .. ")")
-                if type(v) ~= "function" then
-                    error("A mixin method must be a function, " .. type(v) .. " given (" .. error_prefix .. ".StaticMethods." .. k .. ")", 0)
-                end
-                if lookup.Disabled[k] then
-                    error("Mixin methods cannot be defined for disabled names (" .. error_prefix .. ".StaticMethods." .. k .. ")", 0)
-                end
-                local clash = find_property_name_clash(k, {"Methods", "Properties"})
-                if clash then
-                    error("A method, static method or property cannot share the same name (" .. error_prefix .. ".StaticMethods." .. k .. " & " .. clash .. ")", 0)
-                end
-                class.Methods[k] = v
-            end
-        end
-
-        if has_attr("Properties", "table") then
-            class.Properties = {}
-            for k, v in pairs(result.Properties) do
-                mixin_private.assert_valid_property_name(k, 0, " (" .. error_prefix .. ".Properties." .. tostring(k) .. ")")
-                if lookup.Disabled[k] then
-                    error("Mixin properties cannot be defined for disabled names (" .. error_prefix .. ".Properties." .. k .. ")", 0)
-                end
-                local clash = find_property_name_clash(k, {"Methods", "StaticMethods"})
-                if clash then
-                    error("A method, static method or property cannot share the same name (" .. error_prefix .. ".Properties." .. k .. " & " .. clash .. ")", 0)
-                end
-                if type(v) ~= "table" then
-                    error("A mixin property descriptor must be a table, " .. type(v) .. " given (" .. error_prefix .. ".Properties." .. k .. ")", 0)
-                end
-                if not v.Get and not v.Set then
-                    error("A mixin property descriptor must have at least a 'Get' or 'Set' attribute (" .. error_prefix .. ".Properties." .. k .. ")", 0)
-                end
-
-                class.Properties[k] = {}
-                lookup.Properties[k] = lookup.Properties[k] or {}
-
-                for kk, vv in pairs(v) do
-                    if kk ~= "Get" and kk ~= "Set" then
-                        error("A mixin property descriptor can only have 'Get' and 'Set' attributes (" .. error_prefix .. ".Properties." .. k .. ")", 0)
-                    end
-                    if type(vv) ~= "function" then
-                        error("A mixin property descriptor attribute must be a function, " .. type(vv) .. " given (" .. error_prefix .. ".Properties." .. k .. "." .. kk .. ")", 0)
-                    end
-                    class.Properties[k][kk] = vv
-                    lookup.Properties[k][kk] = vv
-                end
-            end
-        end
-
-        mixin_lookup[class_name] = lookup
-        mixin_classes[class_name] = class
-    end
-
-    function mixin_private.create_method_reflection(class_name, attr)
-        local t = {}
-        if mixin_classes[class_name][attr] then
-            for k, v in pairs(mixin_classes[class_name][attr]) do
-                t[k] = mixin_private.create_proxy(v)
-            end
-        end
-        return t
-    end
-
-    function mixin_private.create_property_reflection(class_name, attr)
-        local t = {}
-        if mixin_classes[class_name].Properties then
-            for k, v in pairs(mixin_classes[class_name].Properties) do
-                if v[attr] then
-                    t[k] = mixin_private.create_proxy(v[attr])
-                end
-            end
-        end
-        return t
-    end
-
-
-
-    local function fluid_proxy(t, ...)
-        local n = select("#", ...)
-
-        if n == 0 then
-            return t
-        end
-
-
-        for i = 1, n do
-            mixin_private.enable_mixin(select(i, ...))
-        end
-        return ...
-    end
-
-    local function proxy(t, ...)
-        local n = select("#", ...)
-
-        for i = 1, n do
-            mixin_private.enable_mixin(select(i, ...))
-        end
-        return ...
-    end
-
-
-    function mixin_private.create_fluid_proxy(func)
-        return function(t, ...)
-            return fluid_proxy(t, utils.call_and_rethrow(2, func, t, ...))
-        end
-    end
-
-    function mixin_private.create_proxy(func)
-        return function(t, ...)
-            return proxy(t, utils.call_and_rethrow(2, func, t, ...))
-        end
-    end
-
-
-
-    function mixin_private.enable_mixin(object, fcm_class_name)
-        if mixin_props[object] or not library.is_finale_object(object) then
-            return object
-        end
-
-        mixin_private.apply_mixin_foundation(object)
-        fcm_class_name = fcm_class_name or mixin_private.fc_to_fcm_class_name(library.get_class_name(object))
-
-        mixin_private.load_mixin_class(fcm_class_name)
-        mixin_props[object] = {MixinClass = fcm_class_name}
-
-        for _, v in ipairs(mixin_lookup[fcm_class_name].FCMInits) do
-            v(object)
-        end
-
-        return object
-    end
-
-
-
-
-    function mixin_private.apply_mixin_foundation(object)
-        if object.MixinReady then return end
-
-
-        local meta = getmetatable(object)
-
-
-        local original_index = meta.__index
-        local original_newindex = meta.__newindex
-
-        meta.__index = function(t, k)
-
-
-            if k == "MixinReady" then return true end
-
-
-            if not mixin_props[t] then return original_index(t, k) end
-
-            local class = mixin_props[t].MixinClass
-            local prop
-
-
-            if type(k) == "string" and k:sub(-2) == "__" then
-
-                prop = original_index(t, k:sub(1, -3))
-
-
-            elseif mixin_lookup[class].Properties[k] and mixin_lookup[class].Properties[k].Get then
-                prop = utils.call_and_rethrow(2, mixin_lookup[class].Properties[k].Get, t)
-
-
-            elseif mixin_props[t][k] ~= nil then
-                prop = utils.copy_table(mixin_props[t][k])
-
-
-            elseif mixin_lookup[class].Methods[k] then
-                prop = mixin_lookup[class].Methods[k]
-
-
-            elseif instance_reserved_props[k] then
-                prop = reserved_props[k](class)
-
-
-            else
-                prop = original_index(t, k)
-            end
-
-            if type(prop) == "function" then
-                return mixin_private.create_fluid_proxy(prop)
-            end
-
-            return prop
-        end
-
-
-
-        meta.__newindex = function(t, k, v)
-
-            if not mixin_props[t] then
-                return original_newindex(t, k, v)
-            end
-
-            local class = mixin_props[t].MixinClass
-
-
-            if mixin_lookup[class].Disabled[k] or reserved_props[k] then
-                error("No writable member '" .. tostring(k) .. "'", 2)
-            end
-
-
-
-            if mixin_lookup[class].Properties[k] then
-                if mixin_lookup[class].Properties[k].Set then
-                    return mixin_lookup[class].Properties[k].Set(t, v)
-                else
-                    return original_newindex(t, k, v)
-                end
-            end
-
-
-            if type(k) ~= "string" then
-                mixin_props[t][k] = v
-                return
-            end
-
-
-            if k:sub(-2) == "__" then
-                k = k:sub(1, -3)
-                return original_newindex(t, k, v)
-            end
-
-            mixin_private.assert_valid_property_name(k, 3)
-
-            local type_v_original = type(original_index(t, k))
-            local type_v = type(v)
-            local is_mixin_method = mixin_lookup[class].Methods[k] and true or false
-
-
-            if type_v_original == "nil" then
-
-                if is_mixin_method and not (type_v == "function" or type_v == "nil") then
-                    error("A mixin method cannot be overridden with a property.", 2)
-                end
-
-                mixin_props[t][k] = v
-                return
-
-
-            elseif type_v_original == "function" then
-                if not (type_v == "function" or type_v == "nil") then
-                    error("A Finale PDK method cannot be overridden with a property.", 2)
-                end
-
-                mixin_props[t][k] = v
-                return
-            end
-
-
-            return original_newindex(t, k, v)
-        end
-    end
-
-
-    function mixin_private.subclass(object, class_name)
-        if not library.is_finale_object(object) then
-            error("Object is not a finale object.", 2)
-        end
-
-        if not utils.call_and_rethrow(2, mixin_private.subclass_helper, object, class_name) then
-            error(class_name .. " is not a subclass of " .. object.MixinClass, 2)
-        end
-
-        return object
-    end
-
-
-
-    function mixin_private.subclass_helper(object, class_name, suppress_errors)
-        if not object.MixinClass then
-            if suppress_errors then
-                return false
-            end
-
-            error("Object is not mixin-enabled.", 2)
-        end
-
-        if not mixin_private.is_fcx_class_name(class_name) then
-            if suppress_errors then
-                return false
-            end
-
-            error("Mixins can only be subclassed with an FCX class.", 2)
-        end
-
-        if object.MixinClass == class_name then return true end
-
-        mixin_private.load_mixin_class(class_name)
-
-        if not mixin_classes[class_name] then
-            if suppress_errors then
-                return false
-            end
-
-            error("Mixin '" .. class_name .. "' not found.", 2)
-        end
-
-
-        if mixin_private.is_fcm_class_name(mixin_classes[class_name].Parent) and mixin_classes[class_name].Parent ~= object.MixinClass then
-            return false
-        end
-
-
-        if mixin_classes[class_name].Parent ~= object.MixinClass then
-            if not utils.call_and_rethrow(2, mixin_private.subclass_helper, object, mixin_classes[class_name].Parent) then
-                return false
-            end
-        end
-
-
-        mixin_props[object].MixinClass = class_name
-
-
-        if mixin_classes[class_name].Disabled then
-            for k, _ in pairs(mixin_classes[class_name].Disabled) do
-                mixin_props[object][k] = nil
-            end
-        end
-
-
-        if mixin_classes[class_name].Init then
-            utils.call_and_rethrow(2, mixin_classes[class_name].Init, object)
-        end
-
-        return true
-    end
-
-
-    function mixin_private.create_fcm(class_name, ...)
-        mixin_private.load_mixin_class(class_name)
-        if not mixin_classes[class_name] then return nil end
-
-        return mixin_private.enable_mixin(utils.call_and_rethrow(2, finale[mixin_private.fcm_to_fc_class_name(class_name)], ...))
-    end
-
-
-    function mixin_private.create_fcx(class_name, ...)
-        mixin_private.load_mixin_class(class_name)
-        if not mixin_classes[class_name] then return nil end
-
-        local object = mixin_private.create_fcm(mixin_classes[class_name].Base, ...)
-
-        if not object then return nil end
-
-        if not utils.call_and_rethrow(2, mixin_private.subclass_helper, object, class_name, false) then
-            return nil
-        end
-
-        return object
-    end
-
-
-    mixin_public.is_fc_class_name = mixin_private.is_fc_class_name
-
-
-    mixin_public.is_fcm_class_name = mixin_private.is_fcm_class_name
-
-
-    mixin_public.is_fcx_class_name = mixin_private.is_fcx_class_name
-
-
-    mixin_public.fc_to_fcm_class_name = mixin_private.fc_to_fcm_class_name
-
-
-    mixin_public.fcm_to_fc_class_name = mixin_private.fcm_to_fc_class_name
-
-
-    mixin_public.subclass = mixin_private.subclass
-
-
-    function mixin_public.UI()
-        return mixin_private.enable_mixin(finenv.UI(), "FCMUI")
-    end
-
-
-    function mixin_public.eachentry(region, layer)
-        local measure = region.StartMeasure
-        local slotno = region:GetStartSlot()
-        local i = 0
-        local layertouse = 0
-        if layer ~= nil then layertouse = layer end
-        local c = mixin.FCMNoteEntryCell(measure, region:CalcStaffNumber(slotno))
-        c:SetLoadLayerMode(layertouse)
-        c:Load()
-        return function ()
-            while true do
-                i = i + 1;
-                local returnvalue = c:GetItemAt(i - 1)
-                if returnvalue ~= nil then
-                    if (region:IsEntryPosWithin(returnvalue)) then return returnvalue end
-                else
-                    measure = measure + 1
-                    if measure > region.EndMeasure then
-                        measure = region.StartMeasure
-                        slotno = slotno + 1
-                        if (slotno > region:GetEndSlot()) then return nil end
-                        c = mixin.FCMNoteEntryCell(measure, region:CalcStaffNumber(slotno))
-                        c:SetLoadLayerMode(layertouse)
-                        c:Load()
-                        i = 0
-                    else
-                        c = mixin.FCMNoteEntryCell(measure, region:CalcStaffNumber(slotno))
-                        c:SetLoadLayerMode(layertouse)
-                        c:Load()
-                        i = 0
-                    end
-                end
-            end
-        end
-    end
-
-    return mixin
-end
-package.preload["library.utils"] = package.preload["library.utils"] or function()
-
-    local utils = {}
-
-
-
-
-    function utils.copy_table(t)
-        if type(t) == "table" then
-            local new = {}
-            for k, v in pairs(t) do
-                new[utils.copy_table(k)] = utils.copy_table(v)
-            end
-            setmetatable(new, utils.copy_table(getmetatable(t)))
-            return new
-        else
-            return t
-        end
-    end
-
-    function utils.table_remove_first(t, value)
-        for k = 1, #t do
-            if t[k] == value then
-                table.remove(t, k)
-                return
-            end
-        end
-    end
-
-    function utils.iterate_keys(t)
-        local a, b, c = pairs(t)
-        return function()
-            c = a(b, c)
-            return c
-        end
-    end
-
-    function utils.round(value, places)
-        places = places or 0
-        local multiplier = 10^places
-        local ret = math.floor(value * multiplier + 0.5)
-
-        return places == 0 and ret or ret / multiplier
-    end
-
-    function utils.to_integer_if_whole(value)
-        local int = math.floor(value)
-        return value == int and int or value
-    end
-
-    function utils.calc_roman_numeral(num)
-        local thousands = {'M','MM','MMM'}
-        local hundreds = {'C','CC','CCC','CD','D','DC','DCC','DCCC','CM'}
-        local tens = {'X','XX','XXX','XL','L','LX','LXX','LXXX','XC'}	
-        local ones = {'I','II','III','IV','V','VI','VII','VIII','IX'}
-        local roman_numeral = ''
-        if math.floor(num/1000)>0 then roman_numeral = roman_numeral..thousands[math.floor(num/1000)] end
-        if math.floor((num%1000)/100)>0 then roman_numeral=roman_numeral..hundreds[math.floor((num%1000)/100)] end
-        if math.floor((num%100)/10)>0 then roman_numeral=roman_numeral..tens[math.floor((num%100)/10)] end
-        if num%10>0 then roman_numeral = roman_numeral..ones[num%10] end
-        return roman_numeral
-    end
-
-    function utils.calc_ordinal(num)
-        local units = num % 10
-        local tens = num % 100
-        if units == 1 and tens ~= 11 then
-            return num .. "st"
-        elseif units == 2 and tens ~= 12 then
-            return num .. "nd"
-        elseif units == 3 and tens ~= 13 then
-            return num .. "rd"
-        end
-        return num .. "th"
-    end
-
-    function utils.calc_alphabet(num)
-        local letter = ((num - 1) % 26) + 1
-        local n = math.floor((num - 1) / 26)
-        return string.char(64 + letter) .. (n > 0 and n or "")
-    end
-
-    function utils.clamp(num, minimum, maximum)
-        return math.min(math.max(num, minimum), maximum)
-    end
-
-    function utils.ltrim(str)
-        return string.match(str, "^%s*(.*)")
-    end
-
-    function utils.rtrim(str)
-        return string.match(str, "(.-)%s*$")
-    end
-
-    function utils.trim(str)
-        return utils.ltrim(utils.rtrim(str))
-    end
-
-    local pcall_wrapper
-    local rethrow_placeholder = "tryfunczzz"
-    local pcall_line = debug.getinfo(1, "l").currentline + 2
-    function utils.call_and_rethrow(levels, tryfunczzz, ...)
-        return pcall_wrapper(levels, pcall(function(...) return 1, tryfunczzz(...) end, ...))
-
-    end
-
-    local source = debug.getinfo(1, "S").source
-    local source_is_file = source:sub(1, 1) == "@"
-    if source_is_file then
-        source = source:sub(2)
-    end
-
-    pcall_wrapper = function(levels, success, result, ...)
-        if not success then
-            local file
-            local line
-            local msg
-            file, line, msg = result:match("([a-zA-Z]-:?[^:]+):([0-9]+): (.+)")
-            msg = msg or result
-            local file_is_truncated = file and file:sub(1, 3) == "..."
-            file = file_is_truncated and file:sub(4) or file
-
-
-
-            if file
-                and line
-                and source_is_file
-                and (file_is_truncated and source:sub(-1 * file:len()) == file or file == source)
-                and tonumber(line) == pcall_line
-            then
-                local d = debug.getinfo(levels, "n")
-
-                msg = msg:gsub("'" .. rethrow_placeholder .. "'", "'" .. (d.name or "") .. "'")
-
-                if d.namewhat == "method" then
-                    local arg = msg:match("^bad argument #(%d+)")
-                    if arg then
-                        msg = msg:gsub("#" .. arg, "#" .. tostring(tonumber(arg) - 1), 1)
-                    end
-                end
-                error(msg, levels + 1)
-
-
-            else
-                error(result, 0)
-            end
-        end
-        return ...
-    end
-
-    function utils.rethrow_placeholder()
-        return "'" .. rethrow_placeholder .. "'"
-    end
-
-    function utils.require_embedded(library_name)
-        return require(library_name)
-    end
-    return utils
-end
-package.preload["library.configuration"] = package.preload["library.configuration"] or function()
-
-
-
-    local configuration = {}
-    local utils = require("library.utils")
-    local script_settings_dir = "script_settings"
-    local comment_marker = "--"
-    local parameter_delimiter = "="
-    local path_delimiter = "/"
-    local file_exists = function(file_path)
-        local f = io.open(file_path, "r")
-        if nil ~= f then
-            io.close(f)
-            return true
-        end
-        return false
-    end
-    parse_parameter = function(val_string)
-        if "\"" == val_string:sub(1, 1) and "\"" == val_string:sub(#val_string, #val_string) then
-            return string.gsub(val_string, "\"(.+)\"", "%1")
-        elseif "'" == val_string:sub(1, 1) and "'" == val_string:sub(#val_string, #val_string) then
-            return string.gsub(val_string, "'(.+)'", "%1")
-        elseif "{" == val_string:sub(1, 1) and "}" == val_string:sub(#val_string, #val_string) then
-            return load("return " .. val_string)()
-        elseif "true" == val_string then
-            return true
-        elseif "false" == val_string then
-            return false
-        end
-        return tonumber(val_string)
-    end
-    local get_parameters_from_file = function(file_path, parameter_list)
-        local file_parameters = {}
-        if not file_exists(file_path) then
-            return false
-        end
-        for line in io.lines(file_path) do
-            local comment_at = string.find(line, comment_marker, 1, true)
-            if nil ~= comment_at then
-                line = string.sub(line, 1, comment_at - 1)
-            end
-            local delimiter_at = string.find(line, parameter_delimiter, 1, true)
-            if nil ~= delimiter_at then
-                local name = utils.trim(string.sub(line, 1, delimiter_at - 1))
-                local val_string = utils.trim(string.sub(line, delimiter_at + 1))
-                file_parameters[name] = parse_parameter(val_string)
-            end
-        end
-        local function process_table(param_table, param_prefix)
-            param_prefix = param_prefix and param_prefix.."." or ""
-            for param_name, param_val in pairs(param_table) do
-                local file_param_name = param_prefix .. param_name
-                local file_param_val = file_parameters[file_param_name]
-                if nil ~= file_param_val then
-                    param_table[param_name] = file_param_val
-                elseif type(param_val) == "table" then
-                        process_table(param_val, param_prefix..param_name)
-                end
-            end
-        end
-        process_table(parameter_list)
-        return true
-    end
-
-    function configuration.get_parameters(file_name, parameter_list)
-        local path = ""
-        if finenv.IsRGPLua then
-            path = finenv.RunningLuaFolderPath()
-        else
-            local str = finale.FCString()
-            str:SetRunningLuaFolderPath()
-            path = str.LuaString
-        end
-        local file_path = path .. script_settings_dir .. path_delimiter .. file_name
-        return get_parameters_from_file(file_path, parameter_list)
-    end
-
-
-    local calc_preferences_filepath = function(script_name)
-        local str = finale.FCString()
-        str:SetUserOptionsPath()
-        local folder_name = str.LuaString
-        if not finenv.IsRGPLua and finenv.UI():IsOnMac() then
-
-            folder_name = os.getenv("HOME") .. folder_name:sub(2)
-        end
-        if finenv.UI():IsOnWindows() then
-            folder_name = folder_name .. path_delimiter .. "FinaleLua"
-        end
-        local file_path = folder_name .. path_delimiter
-        if finenv.UI():IsOnMac() then
-            file_path = file_path .. "com.finalelua."
-        end
-        file_path = file_path .. script_name .. ".settings.txt"
-        return file_path, folder_name
-    end
-
-    function configuration.save_user_settings(script_name, parameter_list)
-        local file_path, folder_path = calc_preferences_filepath(script_name)
-        local file = io.open(file_path, "w")
-        if not file and finenv.UI():IsOnWindows() then
-
-            local osutils = finenv.EmbeddedLuaOSUtils and utils.require_embedded("luaosutils")
-            if osutils then
-                osutils.process.make_dir(folder_path)
-            else
-                os.execute('mkdir "' .. folder_path ..'"')
-            end
-            file = io.open(file_path, "w")
-        end
-        if not file then
-            return false
-        end
-        file:write("-- User settings for " .. script_name .. ".lua\n\n")
-        for k,v in pairs(parameter_list) do
-            if type(v) == "string" then
-                v = "\"" .. v .."\""
-            else
-                v = tostring(v)
-            end
-            file:write(k, " = ", v, "\n")
-        end
-        file:close()
-        return true
-    end
-
-    function configuration.get_user_settings(script_name, parameter_list, create_automatically)
-        if create_automatically == nil then create_automatically = true end
-        local exists = get_parameters_from_file(calc_preferences_filepath(script_name), parameter_list)
-        if not exists and create_automatically then
-            configuration.save_user_settings(script_name, parameter_list)
-        end
-        return exists
-    end
-    return configuration
-end
 package.preload["library.layer"] = package.preload["library.layer"] or function()
 
     local layer = {}
-
 
     function layer.copy(region, source_layer, destination_layer, clone_articulations)
         local start = region.StartMeasure
@@ -5194,7 +5065,6 @@ package.preload["library.layer"] = package.preload["library.layer"] or function(
         end
     end
 
-
     function layer.clear(region, layer_to_clear)
         layer_to_clear = layer_to_clear - 1
         local start = region.StartMeasure
@@ -5209,7 +5079,6 @@ package.preload["library.layer"] = package.preload["library.layer"] or function(
             noteentry_layer:ClearAllEntries()
         end
     end
-
 
     function layer.swap(region, swap_a, swap_b)
 
@@ -5249,12 +5118,9 @@ package.preload["library.layer"] = package.preload["library.layer"] or function(
         end
     end
 
-
-
     function layer.max_layers()
         return finale.FCLayerPrefs.GetMaxLayers and finale.FCLayerPrefs.GetMaxLayers() or 4
     end
-
     return layer
 end
 function plugindef()
@@ -5262,20 +5128,20 @@ function plugindef()
     finaleplugin.Author = "Carl Vine"
     finaleplugin.AuthorURL = "http://carlvine.com/lua/"
     finaleplugin.Copyright = "https://creativecommons.org/licenses/by/4.0/"
-    finaleplugin.Version = "v0.16"
-
-    finaleplugin.Date = "2023/02/12"
+    finaleplugin.Version = "v0.19"
+    finaleplugin.Date = "2023/06/12"
     finaleplugin.MinJWLuaVersion = 0.62
     finaleplugin.Notes = [[
         Change notehead shapes on a specific layer of the current selection to one of these shapes:
         Circled / Default / Diamond / Guitar Diamond / Hidden / Number
         Round / Slash / Square / Strikethrough / Triangle / Wedge / X
-        In SMuFL fonts like Finale Maestro, shapes will correspond to appropriate duration values.
+        This script produces an ordered list
+        of notehead types, each line beginning with a configurable "key" code.
+        Call the script, type the key code and hit [Enter] or [Return].
+        In SMuFL fonts like Finale Maestro, shapes will change according to duration values.
         Most duration-dependent shapes are not available in Finale's old (non-SMuFL) Maestro font.
         "Diamond (Guitar)" is like "Diamond" except quarter notes and shorter use filled diamonds.
-        "Number" lets you specify any shape character numerically including SMuFL numbers like "0xe0e1".
-        This script offers the same functionality as "noteheads_change.lua" but offers
-        layer filtering with one menu item and a single confirmation dialog.
+        "Number" lets you specify any shape character as a number including SMuFL numbers like "0xe0e1".
     ]]
     finaleplugin.HashURL = "https://raw.githubusercontent.com/finale-lua/lua-scripts/master/hash/noteheads_change_by_layer.hash"
     return "Noteheads Change by Layer...", "Noteheads Change by Layer", "Change notehead shapes on a specific layer of the current selection"
@@ -5283,9 +5149,29 @@ end
 local notehead = require("library.notehead")
 local mixin = require("library.mixin")
 local configuration = require("library.configuration")
+local library = require("library.general_library")
 local layer = require("library.layer")
+local diamond = { smufl = 0xE0E1, non_smufl = 79 }
+local dialog_options = {
+    "Circled", "Default", "Diamond", "Diamond_Guitar", "Hidden",
+    "Number", "Round", "Slash", "Square", "Strikethrough", "Triangle", "Wedge", "X"
+}
 local config = {
+    Circled = "C",
+    Default = "A",
+    Diamond = "D",
+    Diamond_Guitar = "G",
+    Hidden = "H",
+    Number = "N",
+    Round = "R",
+    Slash = "S",
+    Square = "Q",
+    Strikethrough = "E",
+    Triangle = "T",
+    Wedge = "W",
+    X = "X",
     layer = 0,
+    ignore_duplicates = 0,
     shape = "default",
     glyph = "0xe0e1",
     window_pos_x = false,
@@ -5309,52 +5195,127 @@ function user_chooses_glyph()
     local dialog = mixin.FCXCustomLuaWindow():SetTitle(plugindef())
     local x = 230
     local y_diff = finenv.UI():IsOnMac() and 3 or 0
+    local base_glyph = tonumber(config.glyph) or diamond.smufl
+    local msg = ""
+    if library.is_font_smufl_font() then
+        if base_glyph < 0xE000 then base_glyph = diamond.smufl end
+        config.glyph = string.format("0x%X", base_glyph)
+        msg = "The Default Music Font is SMuFL compliant so glyph numbers "
+        .. "should be higher than 57344 (\"0xE000\")"
+    else
+        if base_glyph >= 0x1000 then base_glyph = diamond.non_smufl end
+        config.glyph = tostring(base_glyph)
+        msg = "The Default Music Font is not SMuFL compliant so glyph numbers "
+        .. "should be lower than 4096 (\"0x1000\")"
+    end
     dialog:CreateStatic(0, y_diff):SetWidth(x + 70)
         :SetText("Enter required character (glyph) number:")
-    dialog:CreateStatic(0, y_diff + 25):SetWidth(x + 100)
-        :SetText("(as plain integer, or hex value like 0xe0e1 or 0xE0E1)")
-    local glyph = tonumber(config.glyph)
-    if glyph >= 0xe000 then
-        config.glyph = string.format("0x%x", glyph)
-    else
-        config.glyph = tostring(glyph)
-    end
-    local answer = dialog:CreateEdit(x, 0):SetText(config.glyph)
+    dialog:CreateStatic(0, y_diff + 25):SetWidth(x + 100):SetHeight(60)
+        :SetText("... as plain integer, or hex value like \"0xE0E1\".\n\n" .. msg)
+    local glyph = dialog:CreateEdit(x, 0):SetText(config.glyph)
     dialog:CreateOkButton()
     dialog:CreateCancelButton()
     dialog_set_position(dialog)
+    dialog:RegisterInitWindow(function() glyph:SetKeyboardFocus() end)
     dialog:RegisterHandleOkButtonPressed(function(self)
-        config.glyph = answer:GetText()
+        config.glyph = glyph:GetText()
         dialog_save_position(self)
     end)
     return (dialog:ExecuteModal(nil) == finale.EXECMODAL_OK)
 end
-function user_chooses_shape()
-    local shapes = { "Circled", "Default", "Diamond", "Diamond_Guitar", "Hidden",
-        "Number", "Round", "Slash", "Square", "Strikethrough", "Triangle", "Wedge", "X"
-    }
-    local x_offset = 190
-    local y_step = 20
-    local mac_offset = finenv.UI():IsOnMac() and 3 or 0
-    local dialog = mixin.FCXCustomLuaWindow():SetTitle(plugindef())
-    dialog:CreateStatic(0, 0):SetText("Select note shape:"):SetWidth(150)
-    local shape_list = dialog:CreateListBox(0, y_step):SetWidth(x_offset - 20):SetHeight(y_step * 11)
-    for i, v in ipairs(shapes) do
-        shape_list:AddString((i == 4) and "Guitar Diamond" or v)
-        if v:lower() == config.shape then
-            shape_list:SetSelectedItem(i - 1)
-        end
+function reassign_keystrokes()
+    local y_step, x_wide = 17, 180
+    local offset = finenv.UI():IsOnMac() and 3 or 0
+    local dialog = mixin.FCXCustomLuaWindow():SetTitle("Noteheads: Reassign Keys")
+    local is_duplicate, errors = false, {}
+    local y = 0
+    for _, v in ipairs(dialog_options) do
+        dialog:CreateEdit(0, y - offset, v):SetText(config[v]):SetWidth(20)
+        dialog:CreateStatic(25, y):SetText(v):SetWidth(x_wide)
+        y = y + y_step
     end
-    local max = layer.max_layers()
-    dialog:CreateStatic(x_offset, y_step * 4):SetText("Layer number (0-" .. max .. "):"):SetWidth(150)
-    dialog:CreateEdit(x_offset, (y_step * 5) - mac_offset, "layer"):SetWidth(50):SetInteger(config.layer or 0)
-    dialog:CreateStatic(x_offset, y_step * 6):SetText("(\"0\" = all layers)"):SetWidth(150)
+    y = y + 7
+    local ignore = dialog:CreateCheckbox(0, y):SetWidth(x_wide)
+        :SetText("Ignore duplicate assignments"):SetCheck(config.ignore_duplicates or 0)
     dialog:CreateOkButton()
     dialog:CreateCancelButton()
     dialog_set_position(dialog)
     dialog:RegisterHandleOkButtonPressed(function(self)
+        local assigned = {}
+        for i, v in ipairs(dialog_options) do
+            local key = self:GetControl(v):GetText() or "?"
+            key = string.upper(string.sub(key, 1, 1))
+            config[v] = key
+            config.ignore_duplicates = ignore:GetCheck()
+            if config.ignore_duplicates == 0 then
+                if assigned[key] then
+                    is_duplicate = true
+                    if not errors[key] then errors[key] = { assigned[key] } end
+                    table.insert(errors[key], i)
+                else
+                    assigned[key] = i
+                end
+            end
+        end
+        if is_duplicate then
+            local msg = ""
+            for k, v in pairs(errors) do
+                msg = msg .. "Key \"" .. k .. "\" is assigned to: "
+                for i, w in ipairs(v) do
+                    if i > 1 then msg = msg .. " and " end
+                    msg = msg .. "\"" .. dialog_options[w] .. "\""
+                end
+                msg = msg .. "\n\n"
+            end
+            finenv.UI():AlertError(msg, "Duplicate Key Assignment")
+        end
+    end)
+    local ok = (dialog:ExecuteModal(nil) == finale.EXECMODAL_OK)
+    return ok, is_duplicate
+end
+function user_chooses_shape()
+    local x_offset = 185
+    local y_step = 17
+    local join = finenv.UI():IsOnMac() and "\t" or ": "
+    local box_high = (#dialog_options * y_step) + 5
+    local mac_offset = finenv.UI():IsOnMac() and 3 or 0
+    local dialog = mixin.FCXCustomLuaWindow():SetTitle(plugindef())
+    dialog:CreateStatic(0, 0):SetText("Select note shape:"):SetWidth(150)
+    local shape_list = dialog:CreateListBox(0, y_step):SetWidth(x_offset - 20):SetHeight(box_high)
+        local function fill_shape_list()
+            shape_list:Clear()
+            for i, v in ipairs(dialog_options) do
+                local item = (i == 4) and "Guitar Diamond" or v
+                shape_list:AddString(config[v] .. join .. item)
+                if v:lower() == config.shape then
+                    shape_list:SetSelectedItem(i - 1)
+                end
+            end
+        end
+    fill_shape_list()
+    local max = layer.max_layers()
+    dialog:CreateStatic(x_offset, y_step * 3):SetText("Layer number (1-" .. max .. "):"):SetWidth(110)
+    dialog:CreateEdit(x_offset + 35, (y_step * 4) - mac_offset, "layer"):SetWidth(30):SetInteger(config.layer or 0)
+    dialog:CreateStatic(x_offset + 15, y_step * 5):SetText("(0 = all layers)"):SetWidth(105)
+    local reassign = dialog:CreateButton(x_offset, y_step * 9)
+        :SetText("Reassign Keys"):SetWidth(100)
+    reassign:AddHandleCommand(function()
+        local ok, is_duplicate = true, true
+        while ok and is_duplicate do
+            ok, is_duplicate = reassign_keystrokes()
+        end
+        if ok then
+            configuration.save_user_settings(script_name, config)
+            fill_shape_list()
+        end
+    end)
+    dialog:CreateOkButton()
+    dialog:CreateCancelButton()
+    dialog_set_position(dialog)
+    dialog:RegisterInitWindow(function() shape_list:SetKeyboardFocus() end)
+    dialog:RegisterHandleOkButtonPressed(function(self)
 
-        config.shape = string.lower( shapes[shape_list:GetSelectedItem() + 1] )
+        config.shape = string.lower( dialog_options[shape_list:GetSelectedItem() + 1] )
         local n = self:GetControl("layer"):GetInteger()
         if n < 0 or n > max then
             n = 0
@@ -5379,5 +5340,6 @@ function change_noteheads()
             end
         end
     end
+    finenv.UI():ActivateDocumentWindow()
 end
 change_noteheads()
